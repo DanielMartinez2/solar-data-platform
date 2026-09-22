@@ -6,3 +6,6 @@ python-dotenv>=1,<2
 
 # Automated unit and integration tests
 pytest>=8,<10
+
+dbt-core>=1.11,<1.12
+dbt-postgres==1.11.0

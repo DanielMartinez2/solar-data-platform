@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: mart_site_power_timeseries
+    description: >
+      Potência total observada por instalação e instante.
+
+    columns:
+      - name: site_id
+        data_tests:
+          - not_null
+
+      - name: measured_at
+        data_tests:
+          - not_null
+
+      - name: reporting_panel_count
+        data_tests:
+          - not_null
+
+      - name: observed_power_w
+        data_tests:
+          - not_null

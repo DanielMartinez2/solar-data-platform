@@ -1,0 +1,12 @@
+
+version: 2
+
+sources:
+  - name: solar_raw
+    description: "Dados solares validados pelo pipeline Python."
+
+    schema: public
+
+    tables:
+      - name: solar_readings
+        description: "Medições solares aceitas e persistidas no PostgreSQL."

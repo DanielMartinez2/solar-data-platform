@@ -1,0 +1,39 @@
+
+version: 2
+
+models:
+  - name: mart_panel_performance
+    description: >
+      Indicadores de desempenho solar
+      agregados por instalação e painel.
+
+    columns:
+      - name: site_id
+        description: Identificador da instalação.
+        data_tests:
+          - not_null
+
+      - name: panel_id
+        description: Identificador do painel na instalação.
+        data_tests:
+          - not_null
+
+      - name: reading_count
+        description: Quantidade de medições válidas.
+        data_tests:
+          - not_null
+
+      - name: avg_power_w
+        description: Potência média em watts.
+        data_tests:
+          - not_null
+
+      - name: min_power_w
+        description: Menor potência registrada.
+        data_tests:
+          - not_null
+
+      - name: max_power_w
+        description: Maior potência registrada.
+        data_tests:
+          - not_null

@@ -1,0 +1,50 @@
+
+version: 2
+
+models:
+  - name: mart_site_performance
+    description: >
+      Indicadores de desempenho solar agregados
+      por instalação, considerando as medições
+      individuais dos painéis.
+
+    columns:
+      - name: site_id
+        description: Identificador da instalação.
+        data_tests:
+          - not_null
+
+      - name: panel_count
+        description: Quantidade de painéis distintos.
+        data_tests:
+          - not_null
+
+      - name: reading_count
+        description: Quantidade de medições válidas.
+        data_tests:
+          - not_null
+
+      - name: first_measured_at
+        description: Primeira medição registrada.
+        data_tests:
+          - not_null
+
+      - name: last_measured_at
+        description: Última medição registrada.
+        data_tests:
+          - not_null
+
+      - name: avg_panel_reading_power_w
+        description: Potência média das leituras individuais.
+        data_tests:
+          - not_null
+
+      - name: min_panel_reading_power_w
+        description: Menor potência individual registrada.
+        data_tests:
+          - not_null
+
+      - name: max_panel_reading_power_w
+        description: Maior potência individual registrada.
+        data_tests:
+          - not_null

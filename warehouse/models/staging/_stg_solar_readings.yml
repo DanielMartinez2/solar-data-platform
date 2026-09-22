@@ -1,0 +1,29 @@
+
+version: 2
+
+models:
+  - name: stg_solar_readings
+    description: >
+      Leituras solares validadas, padronizadas
+      e enriquecidas com potência instantânea.
+
+    columns:
+      - name: measured_at
+        description: Data e hora da medição.
+        data_tests:
+          - not_null
+
+      - name: site_id
+        description: Identificador do local.
+        data_tests:
+          - not_null
+
+      - name: panel_id
+        description: Identificador do painel no local.
+        data_tests:
+          - not_null
+
+      - name: power_w
+        description: Potência instantânea em watts.
+        data_tests:
+          - not_null
