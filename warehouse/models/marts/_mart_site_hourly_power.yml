@@ -1,0 +1,34 @@
+
+version: 2
+
+models:
+  - name: mart_site_hourly_power
+    description: >
+      Indicadores horários da potência observada por instalação,
+      calculados a partir dos instantes de medição disponíveis.
+
+    columns:
+      - name: site_id
+        description: Identificador da instalação.
+        data_tests:
+          - not_null
+
+      - name: hour_utc
+        description: Início da hora de referência em UTC.
+        data_tests:
+          - not_null
+
+      - name: measurement_count
+        description: Quantidade de instantes medidos na hora.
+        data_tests:
+          - not_null
+
+      - name: avg_observed_power_w
+        description: Média aritmética da potência observada.
+        data_tests:
+          - not_null
+
+      - name: max_observed_power_w
+        description: Maior potência observada durante a hora.
+        data_tests:
+          - not_null
