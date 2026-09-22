@@ -1,0 +1,8 @@
+# PostgreSQL adapter with precompiled native dependencies
+psycopg[binary]>=3.3,<4
+
+# Load local environment variables from .env
+python-dotenv>=1,<2
+
+# Automated unit and integration tests
+pytest>=8,<10
