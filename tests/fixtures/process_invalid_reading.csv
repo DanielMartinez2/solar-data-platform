@@ -1,0 +1,2 @@
+timestamp,site_id,panel_id,irradiance_wm2,temperature_c,voltage_v,current_a
+2026-09-17T08:00:00+00:00,GO_ANAPOLIS_01,GTX_14551,215.4,,31.2,2.8
