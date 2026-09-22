@@ -1,0 +1,29 @@
+
+version: 2
+
+models:
+  - name: dim_panels
+    description: >
+      Dimensão dos painéis solares identificados
+      nas medições válidas.
+
+    columns:
+      - name: site_id
+        description: Identificador da instalação.
+        data_tests:
+          - not_null
+
+      - name: panel_id
+        description: Identificador do painel na instalação.
+        data_tests:
+          - not_null
+
+      - name: first_seen_at
+        description: Primeira medição disponível do painel.
+        data_tests:
+          - not_null
+
+      - name: last_seen_at
+        description: Última medição disponível do painel.
+        data_tests:
+          - not_null
