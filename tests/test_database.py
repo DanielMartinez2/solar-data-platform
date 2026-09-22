@@ -2,20 +2,23 @@ import csv
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
-
+from typing import Literal, Any
 import pytest
+import psycopg
+
 from psycopg.errors import CheckViolation
 
 from src.database import (
     get_connection,
     insert_quarantined_readings,
     insert_readings,
+    start_ingestion_run
 )
 from src.validate_readings import (
     AcceptedReading,
     QuarantinedReading,
     process_csv,
+    IngestionResult
 )
 
 
@@ -81,6 +84,14 @@ def delete_test_data():
                     TEST_SOURCE_FILE,
                     TEST_SOURCE_FILE_2,
                 ),
+            )
+
+            cursor.execute(
+                """
+                DELETE FROM ingestion_runs
+                WHERE source_file = %s;
+                """,
+                (TEST_SOURCE_FILE,),
             )
 
 
@@ -1585,3 +1596,201 @@ def test_process_csv_keeps_duplicates_isolated_between_natural_key_groups(
     assert 3 not in all_related_rows
     assert 5 not in all_related_rows
     assert 6 not in all_related_rows
+
+
+def test_start_ingestion_run_creates_running_record():
+    run_id = start_ingestion_run(TEST_SOURCE_FILE)
+
+    assert run_id > 0
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    source_file,
+                    status,
+                    started_at,
+                    finished_at,
+                    accepted_count,
+                    inserted_readings_count,
+                    quarantined_count,
+                    inserted_quarantined_count,
+                    duplicate_count,
+                    error_message
+                FROM ingestion_runs
+                WHERE id = %s;
+                """,
+                (run_id,),
+            )
+
+            result = cursor.fetchone()
+
+    assert result is not None
+
+    assert result[0] == TEST_SOURCE_FILE
+    assert result[1] == "running"
+    assert result[2] is not None
+    assert result[2].tzinfo is not None
+    assert result[3] is None
+    assert result[4:9] == (0, 0, 0, 0, 0)
+    assert result[9] is None
+
+
+def finish_ingestion_run_success(
+    run_id: int,
+    result: IngestionResult,
+    inserted_readings: int,
+    inserted_quarantined: int,
+    *,
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE ingestion_runs
+            SET
+                status = 'success',
+                finished_at = NOW(),
+                accepted_count = %s,
+                inserted_readings_count = %s,
+                quarantined_count = %s,
+                inserted_quarantined_count = %s,
+                duplicate_count = %s,
+                error_message = NULL
+            WHERE id = %s
+              AND status = 'running'
+            RETURNING id;
+            """,
+            (
+                len(result["accepted"]),
+                inserted_readings,
+                len(result["quarantined"]),
+                inserted_quarantined,
+                len(result["skipped_duplicate_rows"]),
+                run_id,
+            ),
+        )
+
+        if cursor.fetchone() is None:
+            raise ValueError(
+                f"Ingestion run {run_id} is not running "
+                "or does not exist"
+            )
+
+def finish_ingestion_run_failed(
+    run_id: int,
+    error_message: str,
+) -> None:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE ingestion_runs
+                SET
+                    status = 'failed',
+                    finished_at = NOW(),
+                    error_message = %s
+                WHERE id = %s
+                  AND status = 'running'
+                RETURNING id;
+                """,
+                (
+                    error_message,
+                    run_id,
+                ),
+            )
+
+            if cursor.fetchone() is None:
+                raise ValueError(
+                    f"Ingestion run {run_id} is not running "
+                    "or does not exist"
+                )
+
+def test_finish_ingestion_run_success_records_counts():
+    run_id = start_ingestion_run(TEST_SOURCE_FILE)
+
+    result: IngestionResult = {
+        "accepted": [build_accepted_reading()],
+        "quarantined": [build_quarantined_reading()],
+        "skipped_duplicate_rows": [3],
+    }
+
+    with get_connection() as connection:
+        inserted_readings = insert_readings(
+            result["accepted"],
+            connection=connection,
+        )
+
+        inserted_quarantined = insert_quarantined_readings(
+            TEST_SOURCE_FILE,
+            result["quarantined"],
+            connection=connection,
+        )
+
+        finish_ingestion_run_success(
+            run_id,
+            result,
+            inserted_readings,
+            inserted_quarantined,
+            connection=connection,
+        )
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    status,
+                    finished_at,
+                    accepted_count,
+                    inserted_readings_count,
+                    quarantined_count,
+                    inserted_quarantined_count,
+                    duplicate_count,
+                    error_message
+                FROM ingestion_runs
+                WHERE id = %s;
+                """,
+                (run_id,),
+            )
+
+            run = cursor.fetchone()
+
+    assert run is not None
+
+    assert run[0] == "success"
+    assert run[1] is not None
+    assert run[2:7] == (1, 1, 1, 1, 1)
+    assert run[7] is None
+
+
+def test_finish_ingestion_run_failed_records_error():
+    run_id = start_ingestion_run(TEST_SOURCE_FILE)
+
+    finish_ingestion_run_failed(
+        run_id,
+        "Simulated database failure",
+    )
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    status,
+                    finished_at,
+                    error_message
+                FROM ingestion_runs
+                WHERE id = %s;
+                """,
+                (run_id,),
+            )
+
+            run = cursor.fetchone()
+
+    assert run is not None
+
+    assert run[0] == "failed"
+    assert run[1] is not None
+    assert run[2] == "Simulated database failure"
