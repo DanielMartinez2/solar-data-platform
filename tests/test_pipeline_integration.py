@@ -20,9 +20,18 @@ TEST_SITE_ID = "PYTEST_E2E_SITE"
 TEST_SOURCE_FILE = "pytest_e2e_pipeline.csv"
 
 
+
 def delete_e2e_test_data() -> None:
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM ingestion_runs
+                WHERE source_file = %s;
+                """,
+                (TEST_SOURCE_FILE,),
+            )
+
             cursor.execute(
                 """
                 DELETE FROM solar_readings
@@ -30,6 +39,7 @@ def delete_e2e_test_data() -> None:
                 """,
                 (TEST_SITE_ID,),
             )
+
             cursor.execute(
                 """
                 DELETE FROM quarantined_readings
@@ -37,7 +47,6 @@ def delete_e2e_test_data() -> None:
                 """,
                 (TEST_SOURCE_FILE,),
             )
-
 
 @pytest.fixture(autouse=True)
 def clean_database():
@@ -360,3 +369,87 @@ def test_pipeline_rolls_back_both_tables_when_quarantine_fails(
 
     assert accepted_count[0] == 0
     assert quarantined_count[0] == 0
+
+
+def test_pipeline_records_successful_runs_and_reprocessing(
+    end_to_end_csv: Path,
+):
+    # First execution: all distinct records are new.
+    first_result, first_inserted, first_quarantined = (
+        ingest_csv(end_to_end_csv)
+    )
+
+    assert len(first_result["accepted"]) == 2
+    assert len(first_result["quarantined"]) == 3
+    assert first_result["skipped_duplicate_rows"] == [3, 7]
+
+    assert first_inserted == 2
+    assert first_quarantined == 3
+
+    # Second execution: all records already exist.
+    second_result, second_inserted, second_quarantined = (
+        ingest_csv(end_to_end_csv)
+    )
+
+    assert second_result == first_result
+    assert second_inserted == 0
+    assert second_quarantined == 0
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    status,
+                    accepted_count,
+                    inserted_readings_count,
+                    quarantined_count,
+                    inserted_quarantined_count,
+                    duplicate_count,
+                    finished_at IS NOT NULL
+                FROM ingestion_runs
+                WHERE source_file = %s
+                ORDER BY id;
+                """,
+                (TEST_SOURCE_FILE,),
+            )
+
+            runs = cursor.fetchall()
+
+    assert runs == [
+        ("success", 2, 2, 3, 3, 2, True),
+        ("success", 2, 0, 3, 0, 2, True),
+    ]
+
+
+def test_pipeline_records_failed_run_when_csv_is_missing(
+    tmp_path: Path,
+):
+    missing_csv = tmp_path / TEST_SOURCE_FILE
+
+    assert not missing_csv.exists()
+
+    with pytest.raises(FileNotFoundError):
+        ingest_csv(missing_csv)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    status,
+                    finished_at,
+                    error_message
+                FROM ingestion_runs
+                WHERE source_file = %s;
+                """,
+                (TEST_SOURCE_FILE,),
+            )
+
+            run = cursor.fetchone()
+
+    assert run is not None
+    assert run[0] == "failed"
+    assert run[1] is not None
+    assert run[2] is not None
+    assert TEST_SOURCE_FILE in run[2]

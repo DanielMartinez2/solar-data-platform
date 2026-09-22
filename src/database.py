@@ -128,22 +128,129 @@ def insert_quarantined_readings(
     return inserted_count
 
 
+def start_ingestion_run(source_file: str) -> int:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO ingestion_runs (source_file)
+                VALUES (%s)
+                RETURNING id;
+                """,
+                (source_file,),
+            )
+
+            result = cursor.fetchone()
+
+            assert result is not None
+            return int(result[0])
+
+
+def finish_ingestion_run_success(
+    run_id: int,
+    result: IngestionResult,
+    inserted_readings: int,
+    inserted_quarantined: int,
+    *,
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE ingestion_runs
+            SET
+                status = 'success',
+                finished_at = NOW(),
+                accepted_count = %s,
+                inserted_readings_count = %s,
+                quarantined_count = %s,
+                inserted_quarantined_count = %s,
+                duplicate_count = %s,
+                error_message = NULL
+            WHERE id = %s
+              AND status = 'running'
+            RETURNING id;
+            """,
+            (
+                len(result["accepted"]),
+                inserted_readings,
+                len(result["quarantined"]),
+                inserted_quarantined,
+                len(result["skipped_duplicate_rows"]),
+                run_id,
+            ),
+        )
+
+        if cursor.fetchone() is None:
+            raise ValueError(
+                f"Ingestion run {run_id} does not exist "
+                "or is not running"
+            )
+
+
+def finish_ingestion_run_failed(
+    run_id: int,
+    error_message: str,
+) -> None:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE ingestion_runs
+                SET
+                    status = 'failed',
+                    finished_at = NOW(),
+                    error_message = %s
+                WHERE id = %s
+                  AND status = 'running'
+                RETURNING id;
+                """,
+                (
+                    error_message,
+                    run_id,
+                ),
+            )
+
+            if cursor.fetchone() is None:
+                raise ValueError(
+                    f"Ingestion run {run_id} does not exist "
+                    "or is not running"
+                )
+
 def ingest_csv(
     csv_path: Path,
 ) -> tuple[IngestionResult, int, int]:
-    result = process_csv(csv_path)
+    run_id = start_ingestion_run(csv_path.name)
 
-    with get_connection() as connection:
-        inserted_readings = insert_readings(
-            result["accepted"],
-            connection=connection,
-        )
+    try:
+        result = process_csv(csv_path)
 
-        inserted_quarantined = insert_quarantined_readings(
-            csv_path.name,
-            result["quarantined"],
-            connection=connection,
+        with get_connection() as connection:
+            inserted_readings = insert_readings(
+                result["accepted"],
+                connection=connection,
+            )
+
+            inserted_quarantined = insert_quarantined_readings(
+                csv_path.name,
+                result["quarantined"],
+                connection=connection,
+            )
+
+            finish_ingestion_run_success(
+                run_id,
+                result,
+                inserted_readings,
+                inserted_quarantined,
+                connection=connection,
+            )
+
+    except Exception as error:
+        finish_ingestion_run_failed(
+            run_id,
+            str(error),
         )
+        raise
 
     return (
         result,
