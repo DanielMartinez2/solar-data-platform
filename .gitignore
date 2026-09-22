@@ -8,3 +8,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+warehouse/target/
+warehouse/logs/
+warehouse/dbt_packages/
