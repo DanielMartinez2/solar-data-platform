@@ -5,10 +5,12 @@ import pytest
 
 from src.database import (
     get_connection,
+    ingest_csv,
     insert_quarantined_readings,
     insert_readings,
 )
 from src.validate_readings import (
+    IngestionResult,
     QuarantinedReading,
     process_csv,
 )
@@ -290,3 +292,71 @@ def test_pipeline_end_to_end_is_idempotent(
     assert quarantined_count is not None
     assert accepted_count[0] == 2
     assert quarantined_count[0] == 3
+
+
+def test_pipeline_rolls_back_both_tables_when_quarantine_fails(
+    end_to_end_csv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from psycopg.errors import CheckViolation
+
+    original_result = process_csv(end_to_end_csv)
+
+    invalid_quarantine: QuarantinedReading = {
+        "row": 1,  # Violates CHECK (source_row >= 2)
+        "record": dict(
+            original_result["quarantined"][0]["record"]
+        ),
+        "errors": list(
+            original_result["quarantined"][0]["errors"]
+        ),
+    }
+
+    invalid_result: IngestionResult = {
+        "accepted": original_result["accepted"],
+        "quarantined": [
+            *original_result["quarantined"],
+            invalid_quarantine,
+        ],
+        "skipped_duplicate_rows": (
+            original_result["skipped_duplicate_rows"]
+        ),
+    }
+
+    # Simulate a classification result containing an
+    # invalid source row to trigger a database failure.
+    monkeypatch.setattr(
+        "src.database.process_csv",
+        lambda _: invalid_result,
+    )
+
+    with pytest.raises(CheckViolation):
+        ingest_csv(end_to_end_csv)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM solar_readings
+                WHERE site_id = %s;
+                """,
+                (TEST_SITE_ID,),
+            )
+            accepted_count = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM quarantined_readings
+                WHERE source_file = %s;
+                """,
+                (TEST_SOURCE_FILE,),
+            )
+            quarantined_count = cursor.fetchone()
+
+    assert accepted_count is not None
+    assert quarantined_count is not None
+
+    assert accepted_count[0] == 0
+    assert quarantined_count[0] == 0

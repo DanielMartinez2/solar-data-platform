@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 
 from src.validate_readings import (
     AcceptedReading,
+    IngestionResult,
     QuarantinedReading,
     process_csv,
 )
@@ -59,99 +60,128 @@ def get_connection() -> psycopg.Connection[Any]:
     return psycopg.connect(database_url)
 
 
+
 def insert_readings(
     readings: list[AcceptedReading],
+    *,
+    connection: psycopg.Connection[Any] | None = None,
 ) -> int:
+    if connection is None:
+        with get_connection() as own_connection:
+            return insert_readings(
+                readings,
+                connection=own_connection,
+            )
 
     inserted_count = 0
 
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
+    with connection.cursor() as cursor:
+        for reading in readings:
+            cursor.execute(
+                INSERT_READING_SQL,
+                (
+                    reading["timestamp"],
+                    reading["site_id"],
+                    reading["panel_id"],
+                    reading["irradiance_wm2"],
+                    reading["temperature_c"],
+                    reading["voltage_v"],
+                    reading["current_a"],
+                ),
+            )
 
-            for reading in readings:
-                cursor.execute(
-                    INSERT_READING_SQL,
-                    (
-                        reading["timestamp"],
-                        reading["site_id"],
-                        reading["panel_id"],
-                        reading["irradiance_wm2"],
-                        reading["temperature_c"],
-                        reading["voltage_v"],
-                        reading["current_a"],
-                    ),
-                )
-
-                inserted_count += cursor.rowcount
+            inserted_count += cursor.rowcount
 
     return inserted_count
+
 
 def insert_quarantined_readings(
     source_file: str,
     readings: list[QuarantinedReading],
+    *,
+    connection: psycopg.Connection[Any] | None = None,
 ) -> int:
+    if connection is None:
+        with get_connection() as own_connection:
+            return insert_quarantined_readings(
+                source_file,
+                readings,
+                connection=own_connection,
+            )
 
     inserted_count = 0
 
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
+    with connection.cursor() as cursor:
+        for reading in readings:
+            cursor.execute(
+                INSERT_QUARANTINE_SQL,
+                (
+                    source_file,
+                    reading["row"],
+                    Jsonb(reading["record"]),
+                    Jsonb(reading["errors"]),
+                ),
+            )
 
-            for reading in readings:
-                cursor.execute(
-                    INSERT_QUARANTINE_SQL,
-                    (
-                        source_file,
-                        reading["row"],
-                        Jsonb(reading["record"]),
-                        Jsonb(reading["errors"]),
-                    ),
-                )
-
-                inserted_count += cursor.rowcount
+            inserted_count += cursor.rowcount
 
     return inserted_count
 
-def main():
+
+def ingest_csv(
+    csv_path: Path,
+) -> tuple[IngestionResult, int, int]:
+    result = process_csv(csv_path)
+
+    with get_connection() as connection:
+        inserted_readings = insert_readings(
+            result["accepted"],
+            connection=connection,
+        )
+
+        inserted_quarantined = insert_quarantined_readings(
+            csv_path.name,
+            result["quarantined"],
+            connection=connection,
+        )
+
+    return (
+        result,
+        inserted_readings,
+        inserted_quarantined,
+    )
+
+def main() -> None:
     csv_path = (
         Path(__file__).parents[1]
         / "data/raw/solar_readings.csv"
     )
 
-    result = process_csv(csv_path)
-
-    inserted_readings = insert_readings(
-        result["accepted"]
-    )
-
-    inserted_quarantined = insert_quarantined_readings(
-        csv_path.name,
-        result["quarantined"],
+    result, inserted_readings, inserted_quarantined = (
+        ingest_csv(csv_path)
     )
 
     print(
         "Accepted readings:",
         len(result["accepted"]),
     )
-
     print(
         "Inserted readings:",
         inserted_readings,
     )
-
     print(
         "Quarantined readings:",
         len(result["quarantined"]),
     )
-
     print(
         "Inserted quarantined readings:",
         inserted_quarantined,
     )
-
     print(
         "Skipped source duplicates:",
         result["skipped_duplicate_rows"],
     )
+
 
 if __name__ == "__main__":
     main()
