@@ -24,5 +24,30 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres_test:
+    image: postgres:18
+    container_name: solar-postgres-test
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_TEST_DB}
+      POSTGRES_USER: ${POSTGRES_TEST_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_TEST_PASSWORD}
+
+    ports:
+      - "${POSTGRES_TEST_PORT:-5434}:5432"
+
+    volumes:
+      - postgres_test_data:/var/lib/postgresql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
+  postgres_test_data:
