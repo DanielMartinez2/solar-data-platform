@@ -1,0 +1,29 @@
+
+version: 2
+
+seeds:
+  - name: solar_coverage_config
+    description: >
+      Configuração dos painéis e da frequência esperada
+      de medição por instalação e período.
+
+    columns:
+      - name: site_id
+        data_tests:
+          - not_null
+
+      - name: start_date
+        data_tests:
+          - not_null
+
+      - name: end_date
+        data_tests:
+          - not_null
+
+      - name: expected_panel_count
+        data_tests:
+          - not_null
+
+      - name: interval_minutes
+        data_tests:
+          - not_null

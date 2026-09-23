@@ -1,0 +1,40 @@
+
+version: 2
+
+models:
+  - name: mart_site_daily_power
+    description: >
+      Indicadores diários de potência observada por instalação.
+      Os dias seguem o horário local fixo UTC-03:00
+      utilizado na simulação.
+
+    columns:
+      - name: site_id
+        description: Identificador da instalação.
+        data_tests:
+          - not_null
+
+      - name: day_local
+        description: Data local da medição.
+        data_tests:
+          - not_null
+
+      - name: measurement_count
+        description: Quantidade de instantes com medições no dia.
+        data_tests:
+          - not_null
+
+      - name: reported_panel_readings
+        description: Total de contribuições dos painéis no dia.
+        data_tests:
+          - not_null
+
+      - name: avg_observed_power_w
+        description: Média da potência observada por instante.
+        data_tests:
+          - not_null
+
+      - name: max_observed_power_w
+        description: Maior potência observada no dia.
+        data_tests:
+          - not_null
