@@ -12,3 +12,7 @@ htmlcov/
 warehouse/target/
 warehouse/logs/
 warehouse/dbt_packages/
+
+# Generated synthetic datasets
+data/generated/*.csv
+data/generated/*.manifest.json

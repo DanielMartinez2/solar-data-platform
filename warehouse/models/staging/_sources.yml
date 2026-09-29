@@ -10,3 +10,5 @@ sources:
     tables:
       - name: solar_readings
         description: "Medições solares aceitas e persistidas no PostgreSQL."
+      
+      - name: quarantined_readings

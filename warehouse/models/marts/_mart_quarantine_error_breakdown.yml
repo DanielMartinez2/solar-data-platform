@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: mart_quarantine_error_breakdown
+    description: >
+      Agregação diária das ocorrências de erros de validação
+      registradas na quarentena, por instalação, tipo de erro
+      e coluna afetada. Conflitos são excluídos deste modelo.
+
+    columns:
+      - name: site_id
+        description: Identificador da instalação.
+        data_tests:
+          - not_null
+
+      - name: day_local
+        description: Data local da ocorrência no fuso UTC-03:00.
+        data_tests:
+          - not_null
+
+      - name: error_type
+        description: Tipo do erro de validação.
+        data_tests:
+          - not_null
+
+      - name: error_column
+        description: Coluna associada ao erro, quando informada.
+
+      - name: error_count
+        description: Quantidade de ocorrências do erro.
+        data_tests:
+          - not_null
