@@ -1,5 +1,7 @@
 # Solar Data Platform
 
+[![CI](https://github.com/DanielMartinez2/solar-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielMartinez2/solar-data-platform/actions/workflows/ci.yml)
+
 Plataforma de dados para ingestão, validação, armazenamento, transformação e análise de medições de geração solar.
 
 O projeto foi desenvolvido com Python, PostgreSQL, dbt e Power BI e implementa um pipeline de dados de ponta a ponta: desde a leitura de arquivos CSV até a construção de indicadores analíticos e dashboards.
@@ -999,7 +1001,6 @@ O PDF apresenta as quatro páginas utilizadas no relatório Power BI:
 - Calcular energia produzida em `kWh`.
 - Evoluir a modelagem temporal.
 - Avaliar inserções em lote para otimizar a ingestão.
-- Automatizar testes com GitHub Actions.
 - Evoluir o gerenciamento de migrations.
 - Adicionar orquestração do pipeline.
 - Preparar publicação e documentação do dashboard para portfólio.

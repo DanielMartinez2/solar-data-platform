@@ -16,8 +16,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Python + dbt
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+
+    env:
+      POSTGRES_TEST_DB: solar_data_test
+      POSTGRES_TEST_USER: solar_test_user
+      POSTGRES_TEST_PASSWORD: solar_test_password
+      POSTGRES_TEST_PORT: "5434"
+
+      # tests/conftest.py requires both targets and verifies that they differ.
+      DATABASE_URL: postgresql://solar_user:solar_password@localhost:5433/solar_data
+      TEST_DATABASE_URL: postgresql://solar_test_user:solar_test_password@localhost:5434/solar_data_test
+
+    services:
+      postgres_test:
+        image: postgres:18
+        env:
+          POSTGRES_DB: solar_data_test
+          POSTGRES_USER: solar_test_user
+          POSTGRES_PASSWORD: solar_test_password
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U solar_test_user -d solar_data_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Initialize test database
+        env:
+          PGPASSWORD: solar_test_password
+        run: >
+          psql
+          -h localhost
+          -p 5434
+          -U solar_test_user
+          -d solar_data_test
+          -v ON_ERROR_STOP=1
+          -f database/schema.sql
+
+      - name: Run Python tests
+        run: python -m pytest -q
+
+  dbt-build:
+    name: dbt build
     runs-on: ubuntu-latest
 
     env:
@@ -25,14 +86,7 @@ jobs:
       POSTGRES_USER: solar_user
       POSTGRES_PASSWORD: solar_password
       POSTGRES_PORT: "5433"
-
-      POSTGRES_TEST_DB: solar_data_test
-      POSTGRES_TEST_USER: solar_test_user
-      POSTGRES_TEST_PASSWORD: solar_test_password
-      POSTGRES_TEST_PORT: "5434"
-
       DATABASE_URL: postgresql://solar_user:solar_password@localhost:5433/solar_data
-      TEST_DATABASE_URL: postgresql://solar_test_user:solar_test_password@localhost:5434/solar_data_test
 
     services:
       postgres_dev:
@@ -45,20 +99,6 @@ jobs:
           - 5433:5432
         options: >-
           --health-cmd "pg_isready -U solar_user -d solar_data"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      postgres_test:
-        image: postgres:18
-        env:
-          POSTGRES_DB: solar_data_test
-          POSTGRES_USER: solar_test_user
-          POSTGRES_PASSWORD: solar_test_password
-        ports:
-          - 5434:5432
-        options: >-
-          --health-cmd "pg_isready -U solar_test_user -d solar_data_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -91,21 +131,6 @@ jobs:
           -d solar_data
           -v ON_ERROR_STOP=1
           -f database/schema.sql
-
-      - name: Initialize test database
-        env:
-          PGPASSWORD: solar_test_password
-        run: >
-          psql
-          -h localhost
-          -p 5434
-          -U solar_test_user
-          -d solar_data_test
-          -v ON_ERROR_STOP=1
-          -f database/schema.sql
-
-      - name: Run Python tests
-        run: python -m pytest -q
 
       - name: Generate deterministic CI dataset
         run: >
