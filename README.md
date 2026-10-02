@@ -205,6 +205,7 @@ solar-data-platform/
 ├── .env.example
 ├── requirements.txt
 ├── README.md
+├── solar_data.pdf
 │
 ├── data/
 │   ├── raw/
@@ -217,8 +218,7 @@ solar-data-platform/
 │
 ├── docs/
 │   ├── data_warehouse.md
-│   ├── README_GENERATOR.md
-│   └── solar_data.pdf
+│   └── README_GENERATOR.md
 │
 ├── scripts/
 │   ├── generate_solar_data.py
@@ -959,7 +959,7 @@ Medidas
 
 Uma versão exportada do dashboard em PDF está disponível em:
 
-[Dashboard Solar Data Platform — PDF](docs/solar_data.pdf)
+[Dashboard Solar Data Platform — PDF](solar_data.pdf)
 
 O PDF apresenta as quatro páginas utilizadas no relatório Power BI:
 
@@ -974,7 +974,7 @@ O PDF apresenta as quatro páginas utilizadas no relatório Power BI:
 
 - [Data Warehouse](docs/data_warehouse.md)
 - [Gerador de dados sintéticos](docs/README_GENERATOR.md)
-- [Dashboard Power BI — PDF](docs/solar_data.pdf)
+- [Dashboard Power BI — PDF](solar_data.pdf)
 
 ---
 
