@@ -61,14 +61,16 @@ def get_connection() -> psycopg.Connection[Any]:
 
 
 
-def insert_readings(
+def insert_readings_executemany(
     readings: list[AcceptedReading],
     *,
     connection: psycopg.Connection[Any] | None = None,
 ) -> int:
+    """Legacy benchmark path using psycopg executemany()."""
+
     if connection is None:
         with get_connection() as own_connection:
-            return insert_readings(
+            return insert_readings_executemany(
                 readings,
                 connection=own_connection,
             )
@@ -95,20 +97,21 @@ def insert_readings(
 
 
 
-def insert_readings_copy_staging(
+def insert_readings(
     readings: list[AcceptedReading],
     *,
     connection: psycopg.Connection[Any] | None = None,
 ) -> int:
     """Bulk-load accepted readings through a temporary staging table.
 
-    This experimental alternative preserves first-row-wins semantics inside
-    the input batch and keeps ON CONFLICT DO NOTHING against the final table.
+    This is the production persistence path for accepted readings. It
+    preserves first-row-wins semantics inside the input batch and keeps
+    ON CONFLICT DO NOTHING against the final table.
     """
 
     if connection is None:
         with get_connection() as own_connection:
-            return insert_readings_copy_staging(
+            return insert_readings(
                 readings,
                 connection=own_connection,
             )
@@ -218,6 +221,19 @@ def insert_readings_copy_staging(
         raise RuntimeError("Could not count COPY staging inserts")
 
     return int(row[0])
+
+
+def insert_readings_copy_staging(
+    readings: list[AcceptedReading],
+    *,
+    connection: psycopg.Connection[Any] | None = None,
+) -> int:
+    """Compatibility alias for the COPY + staging implementation."""
+
+    return insert_readings(
+        readings,
+        connection=connection,
+    )
 
 
 def insert_quarantined_readings(
