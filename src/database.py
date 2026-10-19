@@ -73,26 +73,25 @@ def insert_readings(
                 connection=own_connection,
             )
 
-    inserted_count = 0
+    params = [
+        (
+            reading["timestamp"],
+            reading["site_id"],
+            reading["panel_id"],
+            reading["irradiance_wm2"],
+            reading["temperature_c"],
+            reading["voltage_v"],
+            reading["current_a"],
+        )
+        for reading in readings
+    ]
 
     with connection.cursor() as cursor:
-        for reading in readings:
-            cursor.execute(
-                INSERT_READING_SQL,
-                (
-                    reading["timestamp"],
-                    reading["site_id"],
-                    reading["panel_id"],
-                    reading["irradiance_wm2"],
-                    reading["temperature_c"],
-                    reading["voltage_v"],
-                    reading["current_a"],
-                ),
-            )
-
-            inserted_count += cursor.rowcount
-
-    return inserted_count
+        cursor.executemany(
+            INSERT_READING_SQL,
+            params,
+        )
+        return cursor.rowcount
 
 
 def insert_quarantined_readings(
