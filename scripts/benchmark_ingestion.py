@@ -182,7 +182,7 @@ def print_result(
         f"{result.classification_seconds:10.3f} s"
     )
     print(
-        "  Accepted INSERTs:       "
+        "  Accepted persistence:   "
         f"{result.accepted_insert_seconds:10.3f} s"
     )
     print(
