@@ -8,6 +8,7 @@ from src.database import (
     ingest_csv,
     insert_quarantined_readings,
     insert_readings,
+    insert_readings_copy_staging,
 )
 from src.validate_readings import (
     IngestionResult,
@@ -243,6 +244,117 @@ def test_pipeline_end_to_end_classifies_and_persists_all_outcomes(
 
     assert 3 not in persisted_by_row
     assert 7 not in persisted_by_row
+
+
+
+def test_ingest_csv_can_use_copy_staging_persistence(
+    end_to_end_csv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "src.database.insert_readings",
+        insert_readings_copy_staging,
+    )
+
+    result, inserted_readings, inserted_quarantined = ingest_csv(
+        end_to_end_csv
+    )
+
+    assert len(result["accepted"]) == 2
+    assert len(result["quarantined"]) == 3
+    assert result["skipped_duplicate_rows"] == [3, 7]
+    assert inserted_readings == 2
+    assert inserted_quarantined == 3
+
+    with get_connection() as connection:
+        accepted_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE site_id = %s;
+            """,
+            (TEST_SITE_ID,),
+        ).fetchone()
+
+        quarantined_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM quarantined_readings
+            WHERE source_file = %s;
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert accepted_count is not None
+    assert quarantined_count is not None
+    assert accepted_count[0] == 2
+    assert quarantined_count[0] == 3
+
+
+def test_ingest_csv_with_copy_staging_rolls_back_when_quarantine_fails(
+    end_to_end_csv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from psycopg.errors import CheckViolation
+
+    original_result = process_csv(end_to_end_csv)
+
+    invalid_quarantine: QuarantinedReading = {
+        "row": 1,
+        "record": dict(
+            original_result["quarantined"][0]["record"]
+        ),
+        "errors": list(
+            original_result["quarantined"][0]["errors"]
+        ),
+    }
+
+    invalid_result: IngestionResult = {
+        "accepted": original_result["accepted"],
+        "quarantined": [
+            *original_result["quarantined"],
+            invalid_quarantine,
+        ],
+        "skipped_duplicate_rows": (
+            original_result["skipped_duplicate_rows"]
+        ),
+    }
+
+    monkeypatch.setattr(
+        "src.database.process_csv",
+        lambda _: invalid_result,
+    )
+    monkeypatch.setattr(
+        "src.database.insert_readings",
+        insert_readings_copy_staging,
+    )
+
+    with pytest.raises(CheckViolation):
+        ingest_csv(end_to_end_csv)
+
+    with get_connection() as connection:
+        accepted_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE site_id = %s;
+            """,
+            (TEST_SITE_ID,),
+        ).fetchone()
+
+        quarantined_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM quarantined_readings
+            WHERE source_file = %s;
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert accepted_count is not None
+    assert quarantined_count is not None
+    assert accepted_count[0] == 0
+    assert quarantined_count[0] == 0
 
 
 def test_pipeline_end_to_end_is_idempotent(

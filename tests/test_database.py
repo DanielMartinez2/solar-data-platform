@@ -304,6 +304,226 @@ def test_insert_readings_copy_staging_preserves_first_row_on_conflict():
     assert row[0] == 500.0
 
 
+
+def test_insert_readings_copy_staging_empty_list_does_nothing():
+    inserted_count = insert_readings_copy_staging([])
+
+    assert inserted_count == 0
+
+    with get_connection() as connection:
+        result = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE site_id IN (%s, %s);
+            """,
+            (
+                TEST_SITE_ID,
+                TEST_SITE_ID_2,
+            ),
+        ).fetchone()
+
+    assert result is not None
+    assert result[0] == 0
+
+
+def test_insert_readings_copy_staging_composite_key_distinguishes_site_and_panel():
+    base_reading = build_accepted_reading()
+
+    different_panel = build_accepted_reading(
+        panel_id="PYTEST_PANEL_2",
+    )
+
+    different_site = build_accepted_reading(
+        site_id=TEST_SITE_ID_2,
+    )
+
+    inserted_count = insert_readings_copy_staging(
+        [
+            base_reading,
+            different_panel,
+            different_site,
+        ]
+    )
+
+    assert inserted_count == 3
+
+    with get_connection() as connection:
+        result = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE
+                timestamp = %s
+                AND site_id IN (%s, %s);
+            """,
+            (
+                TEST_TIMESTAMP,
+                TEST_SITE_ID,
+                TEST_SITE_ID_2,
+            ),
+        ).fetchone()
+
+    assert result is not None
+    assert result[0] == 3
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "irradiance_wm2",
+        "voltage_v",
+        "current_a",
+    ],
+)
+def test_insert_readings_copy_staging_rejects_negative_nonnegative_measurements(
+    field: MeasurementField,
+):
+    reading = build_negative_measurement_reading(field)
+
+    with pytest.raises(CheckViolation):
+        insert_readings_copy_staging([reading])
+
+    with get_connection() as connection:
+        result = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE
+                site_id = %s
+                AND panel_id = %s;
+            """,
+            (
+                reading["site_id"],
+                reading["panel_id"],
+            ),
+        ).fetchone()
+
+    assert result is not None
+    assert result[0] == 0
+
+
+def test_insert_readings_copy_staging_rolls_back_entire_transaction_on_failure():
+    valid_reading = build_accepted_reading(
+        timestamp=datetime(
+            2099,
+            1,
+            2,
+            12,
+            0,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        panel_id="PYTEST_VALID",
+    )
+
+    invalid_reading: AcceptedReading = {
+        "timestamp": datetime(
+            2099,
+            1,
+            2,
+            12,
+            5,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        "site_id": TEST_SITE_ID,
+        "panel_id": "PYTEST_INVALID",
+        "irradiance_wm2": 500.0,
+        "temperature_c": 25.0,
+        "voltage_v": -10.0,
+        "current_a": 5.0,
+    }
+
+    with pytest.raises(CheckViolation):
+        insert_readings_copy_staging(
+            [
+                valid_reading,
+                invalid_reading,
+            ]
+        )
+
+    with get_connection() as connection:
+        result = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE site_id = %s
+              AND panel_id IN (
+                  'PYTEST_VALID',
+                  'PYTEST_INVALID'
+              );
+            """,
+            (TEST_SITE_ID,),
+        ).fetchone()
+
+    assert result is not None
+    assert result[0] == 0
+
+
+def test_insert_readings_copy_staging_mixed_existing_and_new():
+    existing_reading = build_accepted_reading()
+
+    new_reading_1 = build_accepted_reading(
+        timestamp=datetime(
+            2099,
+            1,
+            1,
+            12,
+            5,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        panel_id="PYTEST_PANEL_2",
+        irradiance=510.0,
+    )
+
+    new_reading_2 = build_accepted_reading(
+        timestamp=datetime(
+            2099,
+            1,
+            1,
+            12,
+            10,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        panel_id="PYTEST_PANEL_3",
+        irradiance=520.0,
+    )
+    new_reading_2["temperature_c"] = 26.0
+    new_reading_2["voltage_v"] = 36.0
+    new_reading_2["current_a"] = 5.2
+
+    first_insert = insert_readings_copy_staging(
+        [existing_reading]
+    )
+
+    mixed_insert = insert_readings_copy_staging(
+        [
+            existing_reading,
+            new_reading_1,
+            new_reading_2,
+        ]
+    )
+
+    assert first_insert == 1
+    assert mixed_insert == 2
+
+    with get_connection() as connection:
+        result = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM solar_readings
+            WHERE site_id = %s;
+            """,
+            (TEST_SITE_ID,),
+        ).fetchone()
+
+    assert result is not None
+    assert result[0] == 3
+
+
 def test_insert_readings_inserts_new_reading():
     reading = build_accepted_reading()
 
