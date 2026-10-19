@@ -94,6 +94,131 @@ def insert_readings(
         return cursor.rowcount
 
 
+
+def insert_readings_copy_staging(
+    readings: list[AcceptedReading],
+    *,
+    connection: psycopg.Connection[Any] | None = None,
+) -> int:
+    """Bulk-load accepted readings through a temporary staging table.
+
+    This experimental alternative preserves first-row-wins semantics inside
+    the input batch and keeps ON CONFLICT DO NOTHING against the final table.
+    """
+
+    if connection is None:
+        with get_connection() as own_connection:
+            return insert_readings_copy_staging(
+                readings,
+                connection=own_connection,
+            )
+
+    if not readings:
+        return 0
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            DROP TABLE IF EXISTS staging_solar_readings;
+
+            CREATE TEMP TABLE staging_solar_readings (
+                staging_order BIGINT GENERATED ALWAYS AS IDENTITY,
+                timestamp TIMESTAMPTZ NOT NULL,
+                site_id VARCHAR(50) NOT NULL,
+                panel_id VARCHAR(50) NOT NULL,
+                irradiance_wm2 DOUBLE PRECISION NOT NULL,
+                temperature_c DOUBLE PRECISION NOT NULL,
+                voltage_v DOUBLE PRECISION NOT NULL,
+                current_a DOUBLE PRECISION NOT NULL
+            ) ON COMMIT DROP;
+            """
+        )
+
+        with cursor.copy(
+            """
+            COPY staging_solar_readings (
+                timestamp,
+                site_id,
+                panel_id,
+                irradiance_wm2,
+                temperature_c,
+                voltage_v,
+                current_a
+            )
+            FROM STDIN
+            """
+        ) as copy:
+            for reading in readings:
+                copy.write_row(
+                    (
+                        reading["timestamp"],
+                        reading["site_id"],
+                        reading["panel_id"],
+                        reading["irradiance_wm2"],
+                        reading["temperature_c"],
+                        reading["voltage_v"],
+                        reading["current_a"],
+                    )
+                )
+
+        cursor.execute(
+            """
+            WITH staged AS (
+                SELECT DISTINCT ON (
+                    timestamp,
+                    site_id,
+                    panel_id
+                )
+                    timestamp,
+                    site_id,
+                    panel_id,
+                    irradiance_wm2,
+                    temperature_c,
+                    voltage_v,
+                    current_a
+                FROM staging_solar_readings
+                ORDER BY
+                    timestamp,
+                    site_id,
+                    panel_id,
+                    staging_order
+            ),
+            inserted AS (
+                INSERT INTO solar_readings (
+                    timestamp,
+                    site_id,
+                    panel_id,
+                    irradiance_wm2,
+                    temperature_c,
+                    voltage_v,
+                    current_a
+                )
+                SELECT
+                    timestamp,
+                    site_id,
+                    panel_id,
+                    irradiance_wm2,
+                    temperature_c,
+                    voltage_v,
+                    current_a
+                FROM staged
+                ON CONFLICT (timestamp, site_id, panel_id)
+                DO NOTHING
+                RETURNING 1
+            )
+            SELECT COUNT(*)
+            FROM inserted;
+            """
+        )
+
+        row = cursor.fetchone()
+
+    if row is None:
+        raise RuntimeError("Could not count COPY staging inserts")
+
+    return int(row[0])
+
+
 def insert_quarantined_readings(
     source_file: str,
     readings: list[QuarantinedReading],
