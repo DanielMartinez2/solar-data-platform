@@ -28,7 +28,7 @@ from src.database import (  # noqa: E402
     finish_ingestion_run_success,
     insert_quarantined_readings,
     insert_readings,
-    insert_readings_copy_staging,
+    insert_readings_executemany,
 )
 from src.validate_readings import process_csv  # noqa: E402
 
@@ -102,12 +102,12 @@ def benchmark_ingestion(
         accepted_start = perf_counter()
 
         if strategy == "executemany":
-            inserted_readings = insert_readings(
+            inserted_readings = insert_readings_executemany(
                 result["accepted"],
                 connection=connection,
             )
         elif strategy == "copy-staging":
-            inserted_readings = insert_readings_copy_staging(
+            inserted_readings = insert_readings(
                 result["accepted"],
                 connection=connection,
             )
@@ -216,8 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("executemany", "copy-staging"),
         default="executemany",
         help=(
-            "Accepted-reading persistence strategy "
-            "(default: executemany)."
+            "Accepted-reading persistence strategy. "
+            "copy-staging is the production implementation; "
+            "executemany is retained for comparison."
         ),
     )
     parser.add_argument(
