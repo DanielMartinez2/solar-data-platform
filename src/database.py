@@ -118,9 +118,10 @@ def insert_readings_copy_staging(
 
     with connection.cursor() as cursor:
         cursor.execute(
+            "DROP TABLE IF EXISTS staging_solar_readings;"
+        )
+        cursor.execute(
             """
-            DROP TABLE IF EXISTS staging_solar_readings;
-
             CREATE TEMP TABLE staging_solar_readings (
                 staging_order BIGINT GENERATED ALWAYS AS IDENTITY,
                 timestamp TIMESTAMPTZ NOT NULL,
