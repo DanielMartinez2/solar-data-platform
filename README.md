@@ -299,6 +299,8 @@ Por padrão:
 
 Isso evita conflito com instalações locais do PostgreSQL que utilizem a porta `5432`.
 
+O Docker Compose inicia apenas os serviços PostgreSQL e os volumes de dados. O schema não é criado automaticamente pelo diretório `/docker-entrypoint-initdb.d/`; a criação e a evolução das tabelas são responsabilidade explícita do migration runner.
+
 Para interromper os contêineres preservando os volumes:
 
 ```powershell
@@ -352,6 +354,22 @@ python scripts/run_migrations.py
 ```
 
 O arquivo `database/schema.sql` permanece como snapshot de referência do schema atual; a evolução do banco passa a ser controlada pelas migrations.
+
+### Banco de testes local
+
+Quando o volume de testes for novo, inicialize o schema usando a URL específica de testes:
+
+```powershell
+python scripts/run_migrations.py --database-url-env TEST_DATABASE_URL
+```
+
+Se o banco de testes já existia antes do migration runner e já possui o schema atual, faça também um baseline único nele:
+
+```powershell
+python scripts/run_migrations.py --database-url-env TEST_DATABASE_URL --baseline-through 3
+```
+
+Assim, tanto o ambiente de desenvolvimento quanto o ambiente de testes seguem o mesmo histórico de migrations.
 
 ---
 
