@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -17,15 +18,18 @@ from typing import Any
 import psycopg
 from dotenv import load_dotenv
 
-from src.database import (
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.database import (  # noqa: E402
     finish_ingestion_run_success,
     insert_quarantined_readings,
     insert_readings,
 )
-from src.validate_readings import process_csv
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from src.validate_readings import process_csv  # noqa: E402
 
 
 @dataclass(frozen=True)
