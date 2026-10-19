@@ -79,6 +79,7 @@ Power BI
 ### Persistência e auditoria
 
 - Persistência idempotente com `ON CONFLICT DO NOTHING`.
+- Carga em massa das medições válidas com PostgreSQL `COPY` em tabela temporária de staging, seguida de merge idempotente na tabela final.
 - Armazenamento das medições válidas em `solar_readings`.
 - Armazenamento dos registros problemáticos em `quarantined_readings`.
 - Auditoria das execuções em `ingestion_runs`.
@@ -226,6 +227,7 @@ solar-data-platform/
 │   └── README_GENERATOR.md
 │
 ├── scripts/
+│   ├── benchmark_ingestion.py
 │   ├── generate_solar_data.py
 │   ├── run_dbt.py
 │   └── run_migrations.py
@@ -498,13 +500,33 @@ Quarantined: 2016
 Duplicates: 1440
 ```
 
-Tempo observado durante a ingestão completa no ambiente de desenvolvimento:
+### Otimização da persistência
 
-```text
-187.95 segundos
+A persistência das medições aceitas evoluiu em três etapas. Para o mesmo conjunto sintético com 283.392 leituras aceitas, os tempos observados na fase de persistência foram:
+
+| Estratégia | Tempo observado |
+|---|---:|
+| `cursor.execute()` linha a linha | 170,677 s |
+| `cursor.executemany()` | 35,444 s |
+| PostgreSQL `COPY` + staging temporária | 6,836 s |
+
+A implementação padrão atual utiliza `COPY` para carregar os registros em uma tabela temporária e, em seguida, executa um `INSERT ... SELECT ... ON CONFLICT DO NOTHING` para a tabela `solar_readings`.
+
+Esse desenho mantém a idempotência e a atomicidade do pipeline, preserva a regra de primeira ocorrência para chaves naturais repetidas no mesmo lote e reduz o custo de envio de centenas de milhares de comandos individuais ao PostgreSQL.
+
+A estratégia anterior com `executemany()` permanece disponível apenas para comparação no benchmark:
+
+```powershell
+python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy executemany
 ```
 
-Esse valor é apenas uma referência do ambiente utilizado durante o desenvolvimento e não representa benchmark de produção.
+Para medir a implementação padrão com `COPY + staging`:
+
+```powershell
+python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy copy-staging
+```
+
+Os tempos são referências do ambiente de desenvolvimento e não representam benchmark de produção.
 
 ---
 
