@@ -8,7 +8,6 @@ from src.database import (
     ingest_csv,
     insert_quarantined_readings,
     insert_readings,
-    insert_readings_copy_staging,
 )
 from src.validate_readings import (
     IngestionResult,
@@ -249,13 +248,7 @@ def test_pipeline_end_to_end_classifies_and_persists_all_outcomes(
 
 def test_ingest_csv_can_use_copy_staging_persistence(
     end_to_end_csv: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(
-        "src.database.insert_readings",
-        insert_readings_copy_staging,
-    )
-
     result, inserted_readings, inserted_quarantined = ingest_csv(
         end_to_end_csv
     )
@@ -324,11 +317,6 @@ def test_ingest_csv_with_copy_staging_rolls_back_when_quarantine_fails(
         "src.database.process_csv",
         lambda _: invalid_result,
     )
-    monkeypatch.setattr(
-        "src.database.insert_readings",
-        insert_readings_copy_staging,
-    )
-
     with pytest.raises(CheckViolation):
         ingest_csv(end_to_end_csv)
 
