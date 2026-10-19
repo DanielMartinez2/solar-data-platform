@@ -12,6 +12,7 @@ from src.database import (
     get_connection,
     insert_quarantined_readings,
     insert_readings,
+    insert_readings_copy_staging,
     start_ingestion_run
 )
 from src.validate_readings import (
@@ -211,6 +212,96 @@ def write_readings_csv(
 # =========================================================
 # Accepted readings
 # =========================================================
+
+
+
+def test_insert_readings_copy_staging_inserts_new_reading():
+    reading = build_accepted_reading()
+
+    inserted_count = insert_readings_copy_staging([reading])
+
+    assert inserted_count == 1
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT irradiance_wm2
+            FROM solar_readings
+            WHERE
+                timestamp = %s
+                AND site_id = %s
+                AND panel_id = %s;
+            """,
+            (
+                TEST_TIMESTAMP,
+                TEST_SITE_ID,
+                TEST_PANEL_ID,
+            ),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == 500.0
+
+
+def test_insert_readings_copy_staging_is_idempotent():
+    reading = build_accepted_reading()
+
+    first_insert = insert_readings_copy_staging([reading])
+    second_insert = insert_readings_copy_staging([reading])
+
+    assert first_insert == 1
+    assert second_insert == 0
+
+
+def test_insert_readings_copy_staging_deduplicates_same_batch():
+    reading = build_accepted_reading()
+
+    inserted_count = insert_readings_copy_staging(
+        [
+            reading,
+            reading,
+        ]
+    )
+
+    assert inserted_count == 1
+
+
+def test_insert_readings_copy_staging_preserves_first_row_on_conflict():
+    first = build_accepted_reading(
+        irradiance=500.0,
+    )
+    second = build_accepted_reading(
+        irradiance=999.0,
+    )
+
+    inserted_count = insert_readings_copy_staging(
+        [
+            first,
+            second,
+        ]
+    )
+
+    assert inserted_count == 1
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT irradiance_wm2
+            FROM solar_readings
+            WHERE
+                timestamp = %s
+                AND site_id = %s
+                AND panel_id = %s;
+            """,
+            (
+                TEST_TIMESTAMP,
+                TEST_SITE_ID,
+                TEST_PANEL_ID,
+            ),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == 500.0
 
 
 def test_insert_readings_inserts_new_reading():
