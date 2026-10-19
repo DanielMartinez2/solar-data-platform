@@ -28,12 +28,14 @@ from src.database import (  # noqa: E402
     finish_ingestion_run_success,
     insert_quarantined_readings,
     insert_readings,
+    insert_readings_copy_staging,
 )
 from src.validate_readings import process_csv  # noqa: E402
 
 
 @dataclass(frozen=True)
 class BenchmarkResult:
+    strategy: str
     classification_seconds: float
     accepted_insert_seconds: float
     quarantine_insert_seconds: float
@@ -78,6 +80,8 @@ def clear_transaction_snapshot(
 def benchmark_ingestion(
     csv_path: Path,
     database_url: str,
+    *,
+    strategy: str,
 ) -> BenchmarkResult:
     total_start = perf_counter()
 
@@ -96,10 +100,22 @@ def benchmark_ingestion(
         )
 
         accepted_start = perf_counter()
-        inserted_readings = insert_readings(
-            result["accepted"],
-            connection=connection,
-        )
+
+        if strategy == "executemany":
+            inserted_readings = insert_readings(
+                result["accepted"],
+                connection=connection,
+            )
+        elif strategy == "copy-staging":
+            inserted_readings = insert_readings_copy_staging(
+                result["accepted"],
+                connection=connection,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported benchmark strategy: {strategy}"
+            )
+
         accepted_insert_seconds = perf_counter() - accepted_start
 
         quarantine_start = perf_counter()
@@ -126,6 +142,7 @@ def benchmark_ingestion(
         connection.rollback()
 
     return BenchmarkResult(
+        strategy=strategy,
         classification_seconds=classification_seconds,
         accepted_insert_seconds=accepted_insert_seconds,
         quarantine_insert_seconds=quarantine_insert_seconds,
@@ -147,6 +164,7 @@ def print_result(
     print("Ingestion benchmark")
     print("=" * 72)
     print(f"CSV: {csv_path}")
+    print(f"Strategy: {result.strategy}")
     print()
     print("Rows")
     print(f"  Accepted:              {result.accepted_count}")
@@ -192,6 +210,15 @@ def build_parser() -> argparse.ArgumentParser:
         "csv_path",
         type=Path,
         help="CSV file to benchmark.",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=("executemany", "copy-staging"),
+        default="executemany",
+        help=(
+            "Accepted-reading persistence strategy "
+            "(default: executemany)."
+        ),
     )
     parser.add_argument(
         "--database-url-env",
@@ -241,6 +268,7 @@ def main() -> int:
     result = benchmark_ingestion(
         csv_path,
         database_url,
+        strategy=args.strategy,
     )
     print_result(
         csv_path,
