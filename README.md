@@ -217,6 +217,9 @@ solar-data-platform/
 ├── database/
 │   ├── schema.sql
 │   └── migrations/
+│       ├── 001_create_solar_readings.sql
+│       ├── 002_create_quarantined_readings.sql
+│       └── 003_create_ingestion_runs.sql
 │
 ├── docs/
 │   ├── data_warehouse.md
@@ -224,7 +227,8 @@ solar-data-platform/
 │
 ├── scripts/
 │   ├── generate_solar_data.py
-│   └── run_dbt.py
+│   ├── run_dbt.py
+│   └── run_migrations.py
 │
 ├── src/
 │   ├── database.py
@@ -236,6 +240,7 @@ solar-data-platform/
 │   ├── test_database.py
 │   ├── test_generate_solar_data.py
 │   ├── test_pipeline_integration.py
+│   ├── test_run_migrations.py
 │   └── test_validate_readings.py
 │
 └── warehouse/
@@ -294,6 +299,8 @@ Por padrão:
 
 Isso evita conflito com instalações locais do PostgreSQL que utilizem a porta `5432`.
 
+O Docker Compose inicia apenas os serviços PostgreSQL e os volumes de dados. O schema não é criado automaticamente pelo diretório `/docker-entrypoint-initdb.d/`; a criação e a evolução das tabelas são responsabilidade explícita do migration runner.
+
 Para interromper os contêineres preservando os volumes:
 
 ```powershell
@@ -312,11 +319,57 @@ caso queira preservar os dados.
 
 ## Inicialização e migrations
 
-Em uma instalação nova, `database/schema.sql` cria as tabelas iniciais do banco.
+O histórico do schema é versionado em `database/migrations/`.
 
-Em volumes já existentes, scripts de `/docker-entrypoint-initdb.d/` não são executados novamente.
+Para um banco vazio, execute:
 
-Nesse caso, migrations pendentes devem ser aplicadas manualmente.
+```powershell
+python scripts/run_migrations.py
+```
+
+O runner aplica os arquivos `NNN_descricao.sql` em ordem numérica e registra cada versão em `schema_migrations`, incluindo checksum SHA-256. Migrations já aplicadas não são executadas novamente e alterações em arquivos já registrados são rejeitadas.
+
+Histórico atual:
+
+```text
+001_create_solar_readings.sql
+002_create_quarantined_readings.sql
+003_create_ingestion_runs.sql
+```
+
+### Banco criado antes do migration runner
+
+Se o banco local já possui o schema atual porque foi inicializado anteriormente por `database/schema.sql`, faça o baseline uma única vez:
+
+```powershell
+python scripts/run_migrations.py --baseline-through 3
+```
+
+Esse comando registra as migrations 001–003 como já aplicadas sem executar novamente o SQL. Use-o somente quando o schema existente já corresponder a essas versões.
+
+Depois disso, novas migrations podem ser aplicadas normalmente com:
+
+```powershell
+python scripts/run_migrations.py
+```
+
+O arquivo `database/schema.sql` permanece como snapshot de referência do schema atual; a evolução do banco passa a ser controlada pelas migrations.
+
+### Banco de testes local
+
+Quando o volume de testes for novo, inicialize o schema usando a URL específica de testes:
+
+```powershell
+python scripts/run_migrations.py --database-url-env TEST_DATABASE_URL
+```
+
+Se o banco de testes já existia antes do migration runner e já possui o schema atual, faça também um baseline único nele:
+
+```powershell
+python scripts/run_migrations.py --database-url-env TEST_DATABASE_URL --baseline-through 3
+```
+
+Assim, tanto o ambiente de desenvolvimento quanto o ambiente de testes seguem o mesmo histórico de migrations.
 
 ---
 
@@ -1001,7 +1054,6 @@ O PDF apresenta as quatro páginas utilizadas no relatório Power BI:
 - Calcular energia produzida em `kWh`.
 - Evoluir a modelagem temporal.
 - Avaliar inserções em lote para otimizar a ingestão.
-- Evoluir o gerenciamento de migrations.
 - Adicionar orquestração do pipeline.
 - Preparar publicação e documentação do dashboard para portfólio.
 - Avaliar futura camada de detecção de anomalias.
