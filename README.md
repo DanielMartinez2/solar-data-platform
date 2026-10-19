@@ -217,6 +217,9 @@ solar-data-platform/
 ├── database/
 │   ├── schema.sql
 │   └── migrations/
+│       ├── 001_create_solar_readings.sql
+│       ├── 002_create_quarantined_readings.sql
+│       └── 003_create_ingestion_runs.sql
 │
 ├── docs/
 │   ├── data_warehouse.md
@@ -224,7 +227,8 @@ solar-data-platform/
 │
 ├── scripts/
 │   ├── generate_solar_data.py
-│   └── run_dbt.py
+│   ├── run_dbt.py
+│   └── run_migrations.py
 │
 ├── src/
 │   ├── database.py
@@ -236,6 +240,7 @@ solar-data-platform/
 │   ├── test_database.py
 │   ├── test_generate_solar_data.py
 │   ├── test_pipeline_integration.py
+│   ├── test_run_migrations.py
 │   └── test_validate_readings.py
 │
 └── warehouse/
@@ -312,11 +317,41 @@ caso queira preservar os dados.
 
 ## Inicialização e migrations
 
-Em uma instalação nova, `database/schema.sql` cria as tabelas iniciais do banco.
+O histórico do schema é versionado em `database/migrations/`.
 
-Em volumes já existentes, scripts de `/docker-entrypoint-initdb.d/` não são executados novamente.
+Para um banco vazio, execute:
 
-Nesse caso, migrations pendentes devem ser aplicadas manualmente.
+```powershell
+python scripts/run_migrations.py
+```
+
+O runner aplica os arquivos `NNN_descricao.sql` em ordem numérica e registra cada versão em `schema_migrations`, incluindo checksum SHA-256. Migrations já aplicadas não são executadas novamente e alterações em arquivos já registrados são rejeitadas.
+
+Histórico atual:
+
+```text
+001_create_solar_readings.sql
+002_create_quarantined_readings.sql
+003_create_ingestion_runs.sql
+```
+
+### Banco criado antes do migration runner
+
+Se o banco local já possui o schema atual porque foi inicializado anteriormente por `database/schema.sql`, faça o baseline uma única vez:
+
+```powershell
+python scripts/run_migrations.py --baseline-through 3
+```
+
+Esse comando registra as migrations 001–003 como já aplicadas sem executar novamente o SQL. Use-o somente quando o schema existente já corresponder a essas versões.
+
+Depois disso, novas migrations podem ser aplicadas normalmente com:
+
+```powershell
+python scripts/run_migrations.py
+```
+
+O arquivo `database/schema.sql` permanece como snapshot de referência do schema atual; a evolução do banco passa a ser controlada pelas migrations.
 
 ---
 
@@ -1001,7 +1036,6 @@ O PDF apresenta as quatro páginas utilizadas no relatório Power BI:
 - Calcular energia produzida em `kWh`.
 - Evoluir a modelagem temporal.
 - Avaliar inserções em lote para otimizar a ingestão.
-- Evoluir o gerenciamento de migrations.
 - Adicionar orquestração do pipeline.
 - Preparar publicação e documentação do dashboard para portfólio.
 - Avaliar futura camada de detecção de anomalias.
