@@ -350,7 +350,53 @@ http://localhost:8080
 
 Neste ambiente de estudo, o Simple Auth Manager está configurado com acesso administrativo automático. Essa opção é apropriada apenas para desenvolvimento local e não deve ser usada como configuração de produção.
 
-Os diretórios `airflow/dags/` e `airflow/plugins/` já fazem parte do projeto. Nesta etapa eles permanecem vazios: a primeira DAG será adicionada somente depois de validarmos que os componentes do Airflow iniciam corretamente.
+Os diretórios `airflow/dags/` e `airflow/plugins/` fazem parte do projeto.
+
+### Primeira DAG de aprendizado
+
+A primeira DAG foi criada em:
+
+```text
+airflow/dags/learning_hello_airflow.py
+```
+
+Ela é propositalmente independente do pipeline solar real. Seu objetivo é permitir observar o ciclo básico do Airflow antes de conectar migrations, ingestão e dbt.
+
+A estrutura é:
+
+```text
+start
+  ↓
+hello_airflow
+  ↓
+finish
+```
+
+Características principais:
+
+- `dag_id="learning_hello_airflow"`;
+- `schedule=None`, portanto a execução é manual;
+- `catchup=False`;
+- três Tasks Python criadas com `@task`;
+- dependências definidas com `>>`;
+- logs produzidos com o módulo padrão `logging`.
+
+Com os serviços do Airflow em execução, confirme que a DAG foi descoberta:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler airflow dags list
+```
+
+Na interface em `http://localhost:8080`, localize `learning_hello_airflow`, abra a DAG e acione uma execução manual.
+
+Também é possível dispará-la pela CLI:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler airflow dags trigger learning_hello_airflow
+```
+
+Depois acompanhe na UI os estados das Task Instances e abra os logs de `start`, `hello_airflow` e `finish`.
+
 
 Para acompanhar os componentes:
 
