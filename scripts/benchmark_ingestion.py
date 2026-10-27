@@ -349,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strategy",
         choices=("executemany", "copy-staging"),
-        default="executemany",
+        default="copy-staging",
         help=(
             "Accepted-reading persistence strategy. "
             "copy-staging is the production implementation; "
