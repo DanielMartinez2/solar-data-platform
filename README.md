@@ -502,13 +502,18 @@ Duplicates: 1440
 
 ### Otimização da persistência
 
-A persistência das medições aceitas evoluiu em três etapas. Para o mesmo conjunto sintético com 283.392 leituras aceitas, os tempos observados na fase de persistência foram:
+A persistência das medições aceitas evoluiu de inserções linha a linha para `executemany()` e, posteriormente, para carga em massa com PostgreSQL `COPY` e tabela temporária de staging.
 
-| Estratégia | Tempo observado |
-|---|---:|
-| `cursor.execute()` linha a linha | 170,677 s |
-| `cursor.executemany()` | 35,444 s |
-| PostgreSQL `COPY` + staging temporária | 6,836 s |
+A primeira implementação, baseada em `cursor.execute()` para cada registro, levou 170,677 s para persistir 283.392 leituras aceitas em uma execução histórica. Esse valor é mantido apenas como referência da implementação inicial, pois foi obtido antes da adoção do benchmark repetível.
+
+A comparação atual utiliza cinco execuções por estratégia no mesmo conjunto sintético e considera a mediana como principal métrica:
+
+| Estratégia | Mediana da persistência | Mediana total | Throughput aproximado |
+|---|---:|---:|---:|
+| `cursor.executemany()` | 33,529 s | 38,380 s | 8,5 mil leituras/s |
+| PostgreSQL `COPY` + staging temporária | 7,335 s | 11,766 s | 38,6 mil leituras/s |
+
+Para a persistência das leituras aceitas, `COPY + staging` foi aproximadamente **4,57× mais rápido** que `executemany()`, com redução de cerca de **78,1%** no tempo mediano dessa etapa. Considerando o pipeline completo medido pelo benchmark, a mediana caiu de 38,380 s para 11,766 s, uma redução de aproximadamente **69,3%**.
 
 A implementação padrão atual utiliza `COPY` para carregar os registros em uma tabela temporária e, em seguida, executa um `INSERT ... SELECT ... ON CONFLICT DO NOTHING` para a tabela `solar_readings`.
 
@@ -517,16 +522,10 @@ Esse desenho mantém a idempotência e a atomicidade do pipeline, preserva a reg
 A estratégia anterior com `executemany()` permanece disponível apenas para comparação no benchmark:
 
 ```powershell
-python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy executemany
+python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy executemany --runs 5
 ```
 
 Para medir a implementação padrão com `COPY + staging`:
-
-```powershell
-python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy copy-staging
-```
-
-Para reduzir o efeito de variações momentâneas de CPU, Docker, cache e I/O, o benchmark também pode repetir a mesma estratégia várias vezes:
 
 ```powershell
 python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy copy-staging --runs 5
@@ -534,7 +533,7 @@ python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_
 
 Quando `--runs` é maior que 1, o script mostra o tempo de cada execução e calcula mínimo, máximo, média e mediana para cada fase. A mediana é a principal referência recomendada para comparar estratégias, pois é menos sensível a uma execução isoladamente lenta ou rápida.
 
-Cada repetição utiliza o mesmo mecanismo de rollback do benchmark, portanto os dados de medição não permanecem gravados no banco.
+Cada repetição utiliza o mesmo mecanismo de rollback do benchmark, portanto os dados de medição não permanecem gravados no banco. As contagens de registros também são verificadas entre as repetições para evitar comparar execuções funcionalmente diferentes.
 
 Os tempos são referências do ambiente de desenvolvimento e não representam benchmark de produção.
 
