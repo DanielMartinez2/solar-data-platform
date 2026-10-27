@@ -352,6 +352,68 @@ Neste ambiente de estudo, o Simple Auth Manager está configurado com acesso adm
 
 Os diretórios `airflow/dags/` e `airflow/plugins/` fazem parte do projeto.
 
+### Executar migrations pelo Airflow
+
+Depois de validar a DAG de aprendizado, o projeto inclui uma segunda DAG:
+
+```text
+solar_run_migrations
+└── run_migrations
+```
+
+Essa DAG não reimplementa a lógica de migrations. A Task executa o mesmo arquivo usado fora do Airflow:
+
+```text
+scripts/run_migrations.py
+```
+
+Para isso, a imagem oficial do Airflow é estendida por `airflow/Dockerfile` e recebe apenas as dependências Python necessárias ao migration runner. Os diretórios `scripts/` e `database/` são montados nos containers Airflow em modo somente leitura.
+
+A conexão também muda de perspectiva dentro do Docker:
+
+```text
+Host Windows:
+localhost:5433
+        ↓
+solar-postgres
+
+Container Airflow:
+postgres:5432
+        ↓
+solar-postgres
+```
+
+O Compose injeta uma `DATABASE_URL` específica para os containers Airflow usando o nome do serviço Docker `postgres`. Isso é necessário porque, de dentro de um container, `localhost` aponta para o próprio container, não para o PostgreSQL da aplicação.
+
+Como a imagem do Airflow agora é personalizada, depois de atualizar essa configuração construa e recrie os serviços:
+
+```powershell
+docker compose --profile airflow build
+docker compose --profile airflow up -d
+```
+
+Confirme que a nova DAG foi descoberta:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler airflow dags list
+```
+
+Depois dispare:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler airflow dags trigger solar_run_migrations
+```
+
+Como o migration runner é idempotente, se todas as migrations já estiverem aplicadas, o comportamento esperado é a Task terminar com sucesso e registrar:
+
+```text
+Database is up to date.
+```
+
+Esse é um exemplo importante de orquestração: o Airflow decide **quando** executar a etapa, mas a regra de negócio e a idempotência continuam pertencendo ao migration runner.
+
+---
+
 ### Primeira DAG de aprendizado
 
 A primeira DAG foi criada em:
