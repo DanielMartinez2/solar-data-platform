@@ -1,5 +1,8 @@
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.3.2
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
+  image: solar-airflow:3.3.2
   user: "${AIRFLOW_UID:-50000}:0"
   profiles:
     - airflow
@@ -15,11 +18,15 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    DATABASE_URL: >-
+      postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
 
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
+    - ./scripts:/opt/solar-data-platform/scripts:ro
+    - ./database:/opt/solar-data-platform/database:ro
 
 services:
   postgres:
@@ -136,6 +143,8 @@ services:
     <<: *airflow-common
     container_name: solar-airflow-scheduler
     depends_on:
+      postgres:
+        condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
       airflow-api-server:
