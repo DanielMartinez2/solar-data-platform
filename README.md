@@ -526,6 +526,16 @@ Para medir a implementação padrão com `COPY + staging`:
 python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy copy-staging
 ```
 
+Para reduzir o efeito de variações momentâneas de CPU, Docker, cache e I/O, o benchmark também pode repetir a mesma estratégia várias vezes:
+
+```powershell
+python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy copy-staging --runs 5
+```
+
+Quando `--runs` é maior que 1, o script mostra o tempo de cada execução e calcula mínimo, máximo, média e mediana para cada fase. A mediana é a principal referência recomendada para comparar estratégias, pois é menos sensível a uma execução isoladamente lenta ou rápida.
+
+Cada repetição utiliza o mesmo mecanismo de rollback do benchmark, portanto os dados de medição não permanecem gravados no banco.
+
 Os tempos são referências do ambiente de desenvolvimento e não representam benchmark de produção.
 
 ---

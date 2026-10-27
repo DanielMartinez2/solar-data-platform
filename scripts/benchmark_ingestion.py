@@ -12,6 +12,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import mean, median
 from time import perf_counter
 from typing import Any
 
@@ -46,6 +47,55 @@ class BenchmarkResult:
     quarantined_count: int
     inserted_quarantined_count: int
     duplicate_count: int
+
+
+@dataclass(frozen=True)
+class TimingStats:
+    minimum: float
+    maximum: float
+    average: float
+    median: float
+
+
+def summarize_timings(values: list[float]) -> TimingStats:
+    if not values:
+        raise ValueError("At least one timing value is required")
+
+    return TimingStats(
+        minimum=min(values),
+        maximum=max(values),
+        average=mean(values),
+        median=median(values),
+    )
+
+
+def validate_consistent_results(
+    results: list[BenchmarkResult],
+) -> None:
+    if not results:
+        raise ValueError("At least one benchmark result is required")
+
+    expected_counts = (
+        results[0].accepted_count,
+        results[0].inserted_readings_count,
+        results[0].quarantined_count,
+        results[0].inserted_quarantined_count,
+        results[0].duplicate_count,
+    )
+
+    for result in results[1:]:
+        observed_counts = (
+            result.accepted_count,
+            result.inserted_readings_count,
+            result.quarantined_count,
+            result.inserted_quarantined_count,
+            result.duplicate_count,
+        )
+
+        if observed_counts != expected_counts:
+            raise RuntimeError(
+                "Benchmark runs produced inconsistent row counts"
+            )
 
 
 def create_benchmark_run(
@@ -199,6 +249,91 @@ def print_result(
     print("Database changes were rolled back.")
 
 
+def print_timing_stats(
+    label: str,
+    stats: TimingStats,
+) -> None:
+    print(
+        f"{label:<24}"
+        f"{stats.minimum:10.3f}"
+        f"{stats.median:10.3f}"
+        f"{stats.average:10.3f}"
+        f"{stats.maximum:10.3f}"
+    )
+
+
+def print_summary(
+    csv_path: Path,
+    results: list[BenchmarkResult],
+) -> None:
+    validate_consistent_results(results)
+
+    first = results[0]
+
+    print()
+    print("Ingestion benchmark summary")
+    print("=" * 72)
+    print(f"CSV: {csv_path}")
+    print(f"Strategy: {first.strategy}")
+    print(f"Runs: {len(results)}")
+    print()
+    print("Rows per run")
+    print(f"  Accepted:              {first.accepted_count}")
+    print(f"  Inserted readings:     {first.inserted_readings_count}")
+    print(f"  Quarantined:           {first.quarantined_count}")
+    print(
+        "  Inserted quarantined:  "
+        f"{first.inserted_quarantined_count}"
+    )
+    print(f"  Source duplicates:     {first.duplicate_count}")
+    print()
+    print("Timing statistics (seconds)")
+    print(
+        f"{'Phase':<24}"
+        f"{'Min':>10}"
+        f"{'Median':>10}"
+        f"{'Mean':>10}"
+        f"{'Max':>10}"
+    )
+    print("-" * 64)
+
+    phases = [
+        (
+            "CSV classification",
+            [item.classification_seconds for item in results],
+        ),
+        (
+            "Accepted persistence",
+            [item.accepted_insert_seconds for item in results],
+        ),
+        (
+            "Quarantine INSERTs",
+            [item.quarantine_insert_seconds for item in results],
+        ),
+        (
+            "Audit finalization",
+            [item.audit_finalize_seconds for item in results],
+        ),
+        (
+            "Total",
+            [item.total_seconds for item in results],
+        ),
+    ]
+
+    for label, values in phases:
+        print_timing_stats(
+            label,
+            summarize_timings(values),
+        )
+
+    print()
+    print(
+        "Use the median as the primary comparison metric between "
+        "persistence strategies."
+    )
+    print("Database changes were rolled back after every run.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -214,11 +349,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strategy",
         choices=("executemany", "copy-staging"),
-        default="executemany",
+        default="copy-staging",
         help=(
             "Accepted-reading persistence strategy. "
             "copy-staging is the production implementation; "
             "executemany is retained for comparison."
+        ),
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help=(
+            "Number of benchmark repetitions (default: 1). "
+            "Use multiple runs to compare median timings."
         ),
     )
     parser.add_argument(
@@ -259,6 +403,9 @@ def main() -> int:
             "--allow-development-database explicitly."
         )
 
+    if args.runs < 1:
+        raise ValueError("--runs must be at least 1")
+
     database_url = os.getenv(args.database_url_env)
 
     if not database_url:
@@ -266,15 +413,33 @@ def main() -> int:
             f"Missing database URL in {args.database_url_env}"
         )
 
-    result = benchmark_ingestion(
-        csv_path,
-        database_url,
-        strategy=args.strategy,
-    )
-    print_result(
-        csv_path,
-        result,
-    )
+    results: list[BenchmarkResult] = []
+
+    for run_number in range(1, args.runs + 1):
+        result = benchmark_ingestion(
+            csv_path,
+            database_url,
+            strategy=args.strategy,
+        )
+        results.append(result)
+
+        if args.runs == 1:
+            print_result(
+                csv_path,
+                result,
+            )
+        else:
+            print(
+                f"Run {run_number:>2}/{args.runs}: "
+                f"accepted={result.accepted_insert_seconds:.3f} s, "
+                f"total={result.total_seconds:.3f} s"
+            )
+
+    if args.runs > 1:
+        print_summary(
+            csv_path,
+            results,
+        )
 
     return 0
 
