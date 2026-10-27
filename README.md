@@ -327,7 +327,7 @@ Airflow 3.3.2
 
 O PostgreSQL do Airflow é separado do PostgreSQL que armazena os dados solares. O primeiro registra estados de DAGs e Tasks; o segundo continua responsável por `solar_readings`, quarentena, auditoria e modelos analíticos.
 
-Antes da primeira inicialização, confirme que as variáveis `AIRFLOW_FERNET_KEY` e `AIRFLOW_API_SECRET_KEY` existem no arquivo local `.env`. Os valores presentes em `.env.example` servem apenas para desenvolvimento local.
+Antes da primeira inicialização, confirme que as variáveis `AIRFLOW_FERNET_KEY`, `AIRFLOW_API_SECRET_KEY` e `AIRFLOW_JWT_SECRET` existem no arquivo local `.env`. O `AIRFLOW_JWT_SECRET` precisa ser idêntico entre Scheduler e API Server, pois o Scheduler assina os tokens de execução das Tasks e o API Server os valida. Os valores presentes em `.env.example` servem apenas para desenvolvimento local.
 
 Inicialize o banco de metadados:
 
