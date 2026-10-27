@@ -16,3 +16,7 @@ warehouse/dbt_packages/
 # Generated synthetic datasets
 data/generated/*.csv
 data/generated/*.manifest.json
+
+# Airflow runtime files
+airflow/logs/
+airflow/simple_auth_manager_passwords.json.generated

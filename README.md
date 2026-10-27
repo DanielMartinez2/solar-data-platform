@@ -190,6 +190,7 @@ A navegação entre as páginas é realizada por um navegador de páginas integr
 - Python 3.12+
 - PostgreSQL 18
 - Docker Compose
+- Apache Airflow 3.3.2
 - Psycopg 3
 - python-dotenv
 - pytest
@@ -209,6 +210,10 @@ solar-data-platform/
 ├── requirements.txt
 ├── README.md
 ├── solar_data.pdf
+│
+├── airflow/
+│   ├── dags/
+│   └── plugins/
 │
 ├── data/
 │   ├── raw/
@@ -301,9 +306,61 @@ Por padrão:
 
 Isso evita conflito com instalações locais do PostgreSQL que utilizem a porta `5432`.
 
-O Docker Compose inicia apenas os serviços PostgreSQL e os volumes de dados. O schema não é criado automaticamente pelo diretório `/docker-entrypoint-initdb.d/`; a criação e a evolução das tabelas são responsabilidade explícita do migration runner.
+Sem perfil adicional, o Docker Compose inicia os bancos PostgreSQL de desenvolvimento e testes. O schema não é criado automaticamente pelo diretório `/docker-entrypoint-initdb.d/`; a criação e a evolução das tabelas são responsabilidade explícita do migration runner.
+
+### Ambiente local do Airflow
+
+O Airflow é mantido em um perfil separado do Docker Compose para que a infraestrutura de orquestração não precise subir durante tarefas comuns de desenvolvimento.
+
+A configuração local utiliza:
+
+```text
+Airflow 3.3.2
+│
+├── api-server
+├── dag-processor
+├── scheduler
+│   └── LocalExecutor
+└── PostgreSQL 17
+    └── metadados do Airflow
+```
+
+O PostgreSQL do Airflow é separado do PostgreSQL que armazena os dados solares. O primeiro registra estados de DAGs e Tasks; o segundo continua responsável por `solar_readings`, quarentena, auditoria e modelos analíticos.
+
+Antes da primeira inicialização, confirme que as variáveis `AIRFLOW_FERNET_KEY` e `AIRFLOW_API_SECRET_KEY` existem no arquivo local `.env`. Os valores presentes em `.env.example` servem apenas para desenvolvimento local.
+
+Inicialize o banco de metadados:
+
+```powershell
+docker compose --profile airflow up airflow-init
+```
+
+Depois inicie os componentes do Airflow:
+
+```powershell
+docker compose --profile airflow up -d
+docker compose ps
+```
+
+A interface local fica disponível em:
+
+```text
+http://localhost:8080
+```
+
+Neste ambiente de estudo, o Simple Auth Manager está configurado com acesso administrativo automático. Essa opção é apropriada apenas para desenvolvimento local e não deve ser usada como configuração de produção.
+
+Os diretórios `airflow/dags/` e `airflow/plugins/` já fazem parte do projeto. Nesta etapa eles permanecem vazios: a primeira DAG será adicionada somente depois de validarmos que os componentes do Airflow iniciam corretamente.
+
+Para acompanhar os componentes:
+
+```powershell
+docker compose --profile airflow ps
+docker compose --profile airflow logs -f airflow-scheduler
+```
 
 Para interromper os contêineres preservando os volumes:
+
 
 ```powershell
 docker compose stop
