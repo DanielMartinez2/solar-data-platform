@@ -1,0 +1,3 @@
+# Dependencies required by Solar Data Platform code executed inside Airflow
+psycopg[binary]>=3.3,<4
+python-dotenv>=1,<2
