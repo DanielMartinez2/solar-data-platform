@@ -574,6 +574,63 @@ Os timeouts evitam Tasks indefinidamente presas. O `dagrun_timeout` funciona com
 
 ---
 
+### DAG de aprendizado: retry controlado
+
+A DAG `learning_retry_behavior` demonstra o ciclo de retry sem tocar no pipeline real.
+
+Ela possui uma única Task:
+
+```text
+fail_once_then_succeed
+```
+
+Com a configuração:
+
+```text
+retries = 2
+retry_delay = 30 segundos
+execution_timeout = 2 minutos
+```
+
+A Task consulta o `try_number` da Task Instance. Na primeira tentativa, ela gera intencionalmente uma exceção. Na tentativa seguinte, conclui com sucesso.
+
+O comportamento esperado é:
+
+```text
+try 1
+running
+  ↓
+failed internamente
+  ↓
+up_for_retry
+  ↓
+espera 30 s
+  ↓
+try 2
+running
+  ↓
+success
+```
+
+Dispare manualmente:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler `
+  airflow dags trigger learning_retry_behavior
+```
+
+Na UI, abra a Task `fail_once_then_succeed` e compare os logs das tentativas. A primeira deve conter:
+
+```text
+Intentional learning failure on the first attempt.
+```
+
+A segunda deve conter uma mensagem indicando que o retry foi bem-sucedido.
+
+Essa DAG é propositalmente separada de `solar_ingestion_pipeline`, para que o estudo de falhas não modifique nem interrompa o pipeline de dados.
+
+---
+
 ### Primeira DAG de aprendizado
 
 A primeira DAG foi criada em:
