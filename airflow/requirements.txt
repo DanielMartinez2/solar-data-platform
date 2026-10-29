@@ -1,3 +1,7 @@
 # Dependencies required by Solar Data Platform code executed inside Airflow
 psycopg[binary]>=3.3,<4
 python-dotenv>=1,<2
+
+# dbt runtime used by the Airflow analytics task
+dbt-core>=1.11,<1.12
+dbt-postgres==1.11.0
