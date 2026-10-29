@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 from airflow.sdk import dag, task
@@ -33,12 +34,18 @@ def run_checked(command: list[str], description: str) -> None:
     dag_id="solar_ingestion_pipeline",
     schedule=None,
     catchup=False,
+    max_active_runs=1,
+    dagrun_timeout=timedelta(minutes=20),
     tags=["solar-data-platform", "ingestion"],
 )
 def solar_ingestion_pipeline():
     """Run migrations, ingest the raw CSV, then build and test dbt models."""
 
-    @task
+    @task(
+        retries=2,
+        retry_delay=timedelta(seconds=30),
+        execution_timeout=timedelta(minutes=2),
+    )
     def run_migrations() -> None:
         if not MIGRATION_SCRIPT.is_file():
             raise FileNotFoundError(
@@ -50,7 +57,11 @@ def solar_ingestion_pipeline():
             "Running Solar Data Platform migrations.",
         )
 
-    @task
+    @task(
+        retries=2,
+        retry_delay=timedelta(seconds=30),
+        execution_timeout=timedelta(minutes=5),
+    )
     def ingest_raw_csv() -> None:
         raw_csv = PROJECT_ROOT / "data" / "raw" / "solar_readings.csv"
 
@@ -64,7 +75,11 @@ def solar_ingestion_pipeline():
             "Ingesting the raw solar CSV.",
         )
 
-    @task
+    @task(
+        retries=2,
+        retry_delay=timedelta(seconds=30),
+        execution_timeout=timedelta(minutes=10),
+    )
     def dbt_build() -> None:
         dbt_project_file = DBT_PROJECT_DIR / "dbt_project.yml"
         profiles_file = DBT_PROJECT_DIR / "profiles.yml"
