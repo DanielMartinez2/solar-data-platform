@@ -414,6 +414,64 @@ Esse é um exemplo importante de orquestração: o Airflow decide **quando** exe
 
 ---
 
+### Pipeline Airflow: migrations + ingestão
+
+Depois da DAG isolada de migrations, o projeto passa a ter uma DAG de pipeline:
+
+```text
+solar_ingestion_pipeline
+
+run_migrations
+      ↓
+ingest_raw_csv
+```
+
+A primeira Task executa o migration runner existente:
+
+```text
+scripts/run_migrations.py
+```
+
+A segunda executa o módulo de ingestão existente:
+
+```text
+python -m src.database
+```
+
+Ela usa o arquivo pequeno e conhecido:
+
+```text
+data/raw/solar_readings.csv
+```
+
+Os diretórios `src/` e `data/raw/` são montados nos containers Airflow como somente leitura. O Airflow não duplica a lógica de validação, quarentena, deduplicação ou persistência; ele apenas orquestra o código já testado pelo projeto.
+
+Depois de atualizar a branch ou fazer merge, recrie os serviços Airflow para que os novos mounts sejam aplicados:
+
+```powershell
+docker compose --profile airflow up -d --force-recreate `
+  airflow-api-server `
+  airflow-dag-processor `
+  airflow-scheduler
+```
+
+Confirme a descoberta:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler airflow dags list
+```
+
+Dispare o pipeline:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler `
+  airflow dags trigger solar_ingestion_pipeline
+```
+
+Como a persistência usa chaves naturais, `ON CONFLICT DO NOTHING` e quarentena idempotente por arquivo/linha, uma nova execução do mesmo CSV não deve duplicar os registros já persistidos.
+
+---
+
 ### Primeira DAG de aprendizado
 
 A primeira DAG foi criada em:

@@ -27,6 +27,8 @@ x-airflow-common: &airflow-common
     - ./airflow/plugins:/opt/airflow/plugins
     - ./scripts:/opt/solar-data-platform/scripts:ro
     - ./database:/opt/solar-data-platform/database:ro
+    - ./src:/opt/solar-data-platform/src:ro
+    - ./data/raw:/opt/solar-data-platform/data/raw:ro
 
 services:
   postgres:
