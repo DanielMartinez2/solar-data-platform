@@ -534,6 +534,46 @@ dbt_build        success
 
 ---
 
+### Resiliência operacional da DAG
+
+A DAG `solar_ingestion_pipeline` também possui proteções para falhas transitórias e execuções longas.
+
+Configuração da DAG:
+
+```text
+max_active_runs = 1
+dagrun_timeout = 20 minutos
+```
+
+Isso impede duas execuções simultâneas do mesmo pipeline e encerra uma DAG Run que ultrapasse o tempo máximo global.
+
+Cada Task possui retries e timeout próprios:
+
+```text
+run_migrations
+  retries: 2
+  retry_delay: 30 s
+  execution_timeout: 2 min
+
+ingest_raw_csv
+  retries: 2
+  retry_delay: 30 s
+  execution_timeout: 5 min
+
+dbt_build
+  retries: 2
+  retry_delay: 30 s
+  execution_timeout: 10 min
+```
+
+Com `retries=2`, uma Task pode executar até três tentativas no total: a tentativa inicial e até duas novas tentativas.
+
+Os retries ajudam em falhas transitórias, como indisponibilidade momentânea do PostgreSQL. Eles não corrigem erros determinísticos, como um SQL inválido ou variável obrigatória ausente.
+
+Os timeouts evitam Tasks indefinidamente presas. O `dagrun_timeout` funciona como um limite adicional para a execução completa.
+
+---
+
 ### Primeira DAG de aprendizado
 
 A primeira DAG foi criada em:
