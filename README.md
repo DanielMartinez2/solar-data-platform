@@ -472,6 +472,67 @@ Como a persistência usa chaves naturais, `ON CONFLICT DO NOTHING` e quarentena 
 
 ---
 
+### Pipeline analítico completo no Airflow
+
+A DAG `solar_ingestion_pipeline` agora possui três etapas:
+
+```text
+run_migrations
+      ↓
+ingest_raw_csv
+      ↓
+dbt_build
+```
+
+A Task `dbt_build` executa:
+
+```text
+dbt build --project-dir /opt/solar-data-platform/warehouse --profiles-dir /opt/solar-data-platform/warehouse
+```
+
+O comando `dbt build` executa os recursos selecionados do projeto e também os testes associados, portanto a Task falha se houver erro na construção dos modelos ou nos testes de qualidade.
+
+Para permitir a execução dentro do container:
+
+- `dbt-core` e `dbt-postgres` fazem parte da imagem Airflow customizada;
+- `warehouse/` é montado como somente leitura;
+- o profile aceita `DBT_POSTGRES_HOST` e `DBT_POSTGRES_PORT`;
+- dentro do Docker, o dbt usa `postgres:5432`;
+- a senha é fornecida por `DBT_ENV_SECRET_POSTGRES_PASSWORD`;
+- artefatos temporários do dbt são gravados em `/tmp/dbt-target` e logs em `/tmp/dbt-logs`, preservando o mount somente leitura do projeto.
+
+Como a imagem ganhou novas dependências, depois do merge execute:
+
+```powershell
+docker compose --profile airflow build
+docker compose --profile airflow up -d --force-recreate
+```
+
+Depois confirme a DAG:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler airflow dags list
+```
+
+e dispare:
+
+```powershell
+docker compose --profile airflow exec airflow-scheduler `
+  airflow dags trigger solar_ingestion_pipeline
+```
+
+Na UI, o resultado esperado é:
+
+```text
+run_migrations   success
+      ↓
+ingest_raw_csv   success
+      ↓
+dbt_build        success
+```
+
+---
+
 ### Primeira DAG de aprendizado
 
 A primeira DAG foi criada em:
