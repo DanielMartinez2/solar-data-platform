@@ -498,6 +498,7 @@ Para permitir a execução dentro do container:
 - `warehouse/` é montado como somente leitura;
 - o profile aceita `DBT_POSTGRES_HOST` e `DBT_POSTGRES_PORT`;
 - dentro do Docker, o dbt usa `postgres:5432`;
+- `POSTGRES_USER` e `POSTGRES_DB` são repassados aos containers Airflow para o `profiles.yml`;
 - a senha é fornecida por `DBT_ENV_SECRET_POSTGRES_PASSWORD`;
 - artefatos temporários do dbt são gravados em `/tmp/dbt-target` e logs em `/tmp/dbt-logs`, preservando o mount somente leitura do projeto.
 
