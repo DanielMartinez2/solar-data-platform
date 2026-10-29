@@ -1,4 +1,4 @@
-"""Orchestrate Solar Data Platform migrations and raw CSV ingestion."""
+"""Orchestrate Solar Data Platform migrations, ingestion, and dbt build."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path("/opt/solar-data-platform")
 MIGRATION_SCRIPT = PROJECT_ROOT / "scripts" / "run_migrations.py"
+DBT_PROJECT_DIR = PROJECT_ROOT / "warehouse"
 
 
 def run_checked(command: list[str], description: str) -> None:
@@ -35,7 +36,7 @@ def run_checked(command: list[str], description: str) -> None:
     tags=["solar-data-platform", "ingestion"],
 )
 def solar_ingestion_pipeline():
-    """Run schema migrations before ingesting the raw solar CSV."""
+    """Run migrations, ingest the raw CSV, then build and test dbt models."""
 
     @task
     def run_migrations() -> None:
@@ -63,7 +64,38 @@ def solar_ingestion_pipeline():
             "Ingesting the raw solar CSV.",
         )
 
-    run_migrations() >> ingest_raw_csv()
+    @task
+    def dbt_build() -> None:
+        dbt_project_file = DBT_PROJECT_DIR / "dbt_project.yml"
+        profiles_file = DBT_PROJECT_DIR / "profiles.yml"
+
+        if not dbt_project_file.is_file():
+            raise FileNotFoundError(
+                f"dbt project file not found: {dbt_project_file}"
+            )
+
+        if not profiles_file.is_file():
+            raise FileNotFoundError(
+                f"dbt profiles file not found: {profiles_file}"
+            )
+
+        run_checked(
+            [
+                "dbt",
+                "build",
+                "--project-dir",
+                str(DBT_PROJECT_DIR),
+                "--profiles-dir",
+                str(DBT_PROJECT_DIR),
+            ],
+            "Building and testing the dbt warehouse.",
+        )
+
+    migrations_task = run_migrations()
+    ingestion_task = ingest_raw_csv()
+    dbt_task = dbt_build()
+
+    migrations_task >> ingestion_task >> dbt_task
 
 
 solar_ingestion_pipeline()

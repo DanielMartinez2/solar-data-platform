@@ -20,6 +20,11 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
     DATABASE_URL: >-
       postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    DBT_POSTGRES_HOST: postgres
+    DBT_POSTGRES_PORT: "5432"
+    DBT_ENV_SECRET_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    DBT_TARGET_PATH: /tmp/dbt-target
+    DBT_LOG_PATH: /tmp/dbt-logs
 
   volumes:
     - ./airflow/dags:/opt/airflow/dags
@@ -29,6 +34,7 @@ x-airflow-common: &airflow-common
     - ./database:/opt/solar-data-platform/database:ro
     - ./src:/opt/solar-data-platform/src:ro
     - ./data/raw:/opt/solar-data-platform/data/raw:ro
+    - ./warehouse:/opt/solar-data-platform/warehouse:ro
 
 services:
   postgres:
