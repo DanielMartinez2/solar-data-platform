@@ -49,11 +49,51 @@ def run_checked(command: list[str], description: str) -> None:
         )
 
 
+def log_task_retry(context: dict) -> None:
+    """Record retries in the DAG processor logs."""
+    task_instance = context["task_instance"]
+    log.warning(
+        "Task retry | dag_id=%s | task_id=%s | run_id=%s | try_number=%s",
+        task_instance.dag_id,
+        task_instance.task_id,
+        context["run_id"],
+        task_instance.try_number,
+    )
+
+
+def log_task_failure(context: dict) -> None:
+    """Record terminal task failures in the DAG processor logs."""
+    task_instance = context["task_instance"]
+    log.error(
+        "Task failed | dag_id=%s | task_id=%s | run_id=%s | try_number=%s | exception=%s",
+        task_instance.dag_id,
+        task_instance.task_id,
+        context["run_id"],
+        task_instance.try_number,
+        context.get("exception"),
+    )
+
+
+def log_dag_failure(context: dict) -> None:
+    """Record failed DAG runs, including run-level timeout failures."""
+    log.error(
+        "DAG run failed | dag_id=%s | run_id=%s | reason=%s",
+        context["dag"].dag_id,
+        context["run_id"],
+        context.get("reason", "not provided"),
+    )
+
+
 @dag(
     dag_id="solar_ingestion_pipeline",
     schedule="0 9 * * *",
     start_date=pendulum.datetime(2026, 10, 29, 9, 0, tz="America/Sao_Paulo"),
     catchup=False,
+    default_args={
+        "on_retry_callback": log_task_retry,
+        "on_failure_callback": log_task_failure,
+    },
+    on_failure_callback=log_dag_failure,
     max_active_runs=1,
     dagrun_timeout=timedelta(minutes=20),
     tags=["solar-data-platform", "ingestion"],
