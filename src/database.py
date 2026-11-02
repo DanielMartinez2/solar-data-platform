@@ -1,4 +1,6 @@
+import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
@@ -14,6 +16,8 @@ from src.validate_readings import (
 )
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 INSERT_READING_SQL = """
     INSERT INTO solar_readings (
@@ -361,6 +365,7 @@ def finish_ingestion_run_failed(
 def ingest_csv(
     csv_path: Path,
 ) -> tuple[IngestionResult, int, int]:
+    started_at = time.perf_counter()
     run_id = start_ingestion_run(csv_path.name)
 
     try:
@@ -391,7 +396,27 @@ def ingest_csv(
             run_id,
             str(error),
         )
+        log.error(
+            "Ingestion failed | run_id=%s | source_file=%s | duration_seconds=%.3f",
+            run_id,
+            csv_path.name,
+            time.perf_counter() - started_at,
+        )
         raise
+
+    log.info(
+        "Ingestion succeeded | run_id=%s | source_file=%s | accepted=%s | "
+        "inserted=%s | quarantined=%s | quarantine_inserted=%s | "
+        "duplicates=%s | duration_seconds=%.3f",
+        run_id,
+        csv_path.name,
+        len(result["accepted"]),
+        inserted_readings,
+        len(result["quarantined"]),
+        inserted_quarantined,
+        len(result["skipped_duplicate_rows"]),
+        time.perf_counter() - started_at,
+    )
 
     return (
         result,
@@ -400,6 +425,8 @@ def ingest_csv(
     )
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+
     csv_path = (
         Path(__file__).parents[1]
         / "data/raw/solar_readings.csv"
