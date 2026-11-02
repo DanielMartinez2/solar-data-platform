@@ -425,6 +425,8 @@ def ingest_csv(
     )
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+
     csv_path = (
         Path(__file__).parents[1]
         / "data/raw/solar_readings.csv"
