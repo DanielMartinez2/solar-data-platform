@@ -34,7 +34,7 @@ def run_checked(command: list[str], description: str) -> None:
 
 @dag(
     dag_id="solar_ingestion_pipeline",
-    schedule="0 9 * * *",
+    schedule="10 20 * * *",
     start_date=pendulum.datetime(2026, 10, 29, 9, 0, tz="America/Sao_Paulo"),
     catchup=False,
     max_active_runs=1,
