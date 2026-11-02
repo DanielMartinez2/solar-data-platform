@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -25,11 +26,27 @@ def run_checked(command: list[str], description: str) -> None:
     log.info("%s", description)
     log.info("Command: %s", " ".join(command))
 
-    subprocess.run(
-        command,
-        cwd=PROJECT_ROOT,
-        check=True,
-    )
+    started_at = time.perf_counter()
+    try:
+        subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        log.error(
+            "Step failed: %s | exit_code=%s | duration_seconds=%.3f",
+            description,
+            error.returncode,
+            time.perf_counter() - started_at,
+        )
+        raise
+    else:
+        log.info(
+            "Step succeeded: %s | duration_seconds=%.3f",
+            description,
+            time.perf_counter() - started_at,
+        )
 
 
 @dag(
