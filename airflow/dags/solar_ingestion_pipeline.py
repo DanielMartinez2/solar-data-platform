@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
 import subprocess
 import sys
 import time
@@ -74,14 +78,58 @@ def log_task_failure(context: dict) -> None:
     )
 
 
+def send_failure_email(context: dict) -> None:
+    """Send one SMTP notification for a failed DAG run, if configured."""
+    host = os.getenv("SOLAR_SMTP_HOST", "").strip()
+    sender = os.getenv("SOLAR_ALERT_FROM", "").strip()
+    recipient = os.getenv("SOLAR_ALERT_TO", "").strip()
+    if not all((host, sender, recipient)):
+        log.warning(
+            "Failure email skipped: configure SOLAR_SMTP_HOST, "
+            "SOLAR_ALERT_FROM and SOLAR_ALERT_TO."
+        )
+        return
+
+    port = int(os.getenv("SOLAR_SMTP_PORT", "587"))
+    username = os.getenv("SOLAR_SMTP_USERNAME", "")
+    password = os.getenv("SOLAR_SMTP_PASSWORD", "")
+    use_starttls = os.getenv("SOLAR_SMTP_STARTTLS", "true").lower() == "true"
+
+    dag_id = context["dag"].dag_id
+    run_id = context["run_id"]
+    reason = str(context.get("reason") or context.get("exception") or "Not provided")
+    message = EmailMessage()
+    message["Subject"] = f"[Solar Data Platform] DAG failed: {dag_id}"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"DAG: {dag_id}\\nRun ID: {run_id}\\nReason: {reason[:1000]}\\n"
+        "Inspect the Airflow UI and DAG processor logs for task details.\\n"
+    )
+
+    try:
+        with smtplib.SMTP(host, port, timeout=10) as smtp:
+            if use_starttls:
+                smtp.starttls(context=ssl.create_default_context())
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as error:
+        # A notification problem must not mask the original DAG failure.
+        log.error("Failure email could not be sent: %s", type(error).__name__)
+    else:
+        log.info("Failure email sent | dag_id=%s | run_id=%s", dag_id, run_id)
+
+
 def log_dag_failure(context: dict) -> None:
-    """Record failed DAG runs, including run-level timeout failures."""
+    """Record failed DAG runs and optionally send one email alert."""
     log.error(
         "DAG run failed | dag_id=%s | run_id=%s | reason=%s",
         context["dag"].dag_id,
         context["run_id"],
         context.get("reason", "not provided"),
     )
+    send_failure_email(context)
 
 
 @dag(
