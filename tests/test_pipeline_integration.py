@@ -6,6 +6,7 @@ import pytest
 from src.database import (
     get_connection,
     ingest_csv,
+    ingest_csv_incremental,
     insert_quarantined_readings,
     insert_readings,
 )
@@ -24,6 +25,10 @@ TEST_SOURCE_FILE = "pytest_e2e_pipeline.csv"
 def delete_e2e_test_data() -> None:
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM processed_files WHERE source_file = %s;",
+                (TEST_SOURCE_FILE,),
+            )
             cursor.execute(
                 """
                 DELETE FROM ingestion_runs
@@ -553,3 +558,85 @@ def test_pipeline_records_failed_run_when_csv_is_missing(
     assert run[1] is not None
     assert run[2] is not None
     assert TEST_SOURCE_FILE in run[2]
+
+def test_incremental_skips_successful_unchanged_file(end_to_end_csv: Path):
+    first = ingest_csv_incremental(end_to_end_csv)
+    second = ingest_csv_incremental(end_to_end_csv)
+
+    assert first is not None
+    assert first[1:] == (2, 3)
+    assert second is None
+
+    with get_connection() as connection:
+        checkpoints = connection.execute(
+            """
+            SELECT p.sha256, r.status
+            FROM processed_files p
+            JOIN ingestion_runs r ON r.id = p.ingestion_run_id
+            WHERE p.source_file = %s;
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchall()
+        audit_count = connection.execute(
+            "SELECT COUNT(*) FROM ingestion_runs WHERE source_file = %s;",
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert len(checkpoints) == 1
+    assert len(checkpoints[0][0]) == 64
+    assert checkpoints[0][1] == "success"
+    assert audit_count == (1,)
+
+
+def test_incremental_rejects_changed_file_with_same_name(
+    end_to_end_csv: Path,
+):
+    assert ingest_csv_incremental(end_to_end_csv) is not None
+    with end_to_end_csv.open("a", encoding="utf-8") as source:
+        source.write(
+            "2099-01-01T13:00:00+00:00,PYTEST_E2E_SITE,"
+            "PANEL_NEW,400,25,35,5\n"
+        )
+
+    with pytest.raises(ValueError, match="Previously processed source file changed"):
+        ingest_csv_incremental(end_to_end_csv)
+
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT COUNT(*) FROM ingestion_runs WHERE source_file = %s;",
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+    assert rows == (1,)
+
+
+def test_incremental_failure_does_not_create_checkpoint_and_can_retry(
+    end_to_end_csv: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    original_process = process_csv
+
+    def fail_once(_path: Path):
+        raise RuntimeError("deliberate ingestion failure")
+
+    monkeypatch.setattr("src.database.process_csv", fail_once)
+
+    with pytest.raises(RuntimeError, match="deliberate ingestion failure"):
+        ingest_csv_incremental(end_to_end_csv)
+
+    with get_connection() as connection:
+        checkpoints = connection.execute(
+            "SELECT COUNT(*) FROM processed_files WHERE source_file = %s;",
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+        previous = connection.execute(
+            "SELECT status FROM ingestion_runs WHERE source_file = %s;",
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert checkpoints == (0,)
+    assert previous == ("failed",)
+
+    monkeypatch.setattr("src.database.process_csv", original_process)
+    outcome = ingest_csv_incremental(end_to_end_csv)
+    assert outcome is not None
+    assert outcome[1:] == (2, 3)
