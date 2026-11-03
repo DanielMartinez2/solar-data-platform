@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import time
@@ -424,13 +425,26 @@ def ingest_csv(
         inserted_quarantined,
     )
 
+DEFAULT_CSV_PATH = (
+    Path(__file__).parents[1] / "data/raw/solar_readings.csv"
+)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Ingest solar readings from CSV.")
+    parser.add_argument(
+        "--csv-path",
+        type=Path,
+        default=DEFAULT_CSV_PATH,
+        help="CSV source path (default: data/raw/solar_readings.csv).",
+    )
+    return parser.parse_args(argv)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
-    csv_path = (
-        Path(__file__).parents[1]
-        / "data/raw/solar_readings.csv"
-    )
+    csv_path = parse_args().csv_path
 
     result, inserted_readings, inserted_quarantined = (
         ingest_csv(csv_path)
