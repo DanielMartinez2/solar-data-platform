@@ -103,8 +103,8 @@ def send_failure_email(context: dict) -> None:
     message["From"] = sender
     message["To"] = recipient
     message.set_content(
-        f"DAG: {dag_id}\\nRun ID: {run_id}\\nReason: {reason[:1000]}\\n"
-        "Inspect the Airflow UI and DAG processor logs for task details.\\n"
+        f"DAG: {dag_id}\nRun ID: {run_id}\nReason: {reason[:1000]}\n"
+        "Inspect the Airflow UI and DAG processor logs for task details.\n"
     )
 
     try:
