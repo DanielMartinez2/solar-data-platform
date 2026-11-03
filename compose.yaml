@@ -27,6 +27,13 @@ x-airflow-common: &airflow-common
     DBT_ENV_SECRET_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     DBT_TARGET_PATH: /tmp/dbt-target
     DBT_LOG_PATH: /tmp/dbt-logs
+    SOLAR_SMTP_HOST: ${SOLAR_SMTP_HOST:-}
+    SOLAR_SMTP_PORT: ${SOLAR_SMTP_PORT:-587}
+    SOLAR_SMTP_USERNAME: ${SOLAR_SMTP_USERNAME:-}
+    SOLAR_SMTP_PASSWORD: ${SOLAR_SMTP_PASSWORD:-}
+    SOLAR_SMTP_STARTTLS: ${SOLAR_SMTP_STARTTLS:-true}
+    SOLAR_ALERT_FROM: ${SOLAR_ALERT_FROM:-}
+    SOLAR_ALERT_TO: ${SOLAR_ALERT_TO:-}
 
   volumes:
     - ./airflow/dags:/opt/airflow/dags
