@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import logging
 import os
 import time
@@ -425,6 +426,115 @@ def ingest_csv(
         inserted_quarantined,
     )
 
+def file_sha256(path: Path) -> str:
+    """Hash file content in chunks rather than loading it all in memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ingest_csv_incremental(
+    csv_path: Path,
+) -> tuple[IngestionResult, int, int] | None:
+    """Skip unchanged successful files and checkpoint new ones atomically.
+
+    A None result means that a matching checkpoint already existed.
+    The source filename is the identity used by the existing quarantine
+    schema, so input filenames must be unique and immutable.
+    """
+    checksum = file_sha256(csv_path)
+    source_file = csv_path.name
+    started_at = time.perf_counter()
+    run_id: int | None = None
+
+    try:
+        with get_connection() as connection:
+            # Serializes concurrent ingestions of the same source filename.
+            # Advisory locks are released automatically on commit/rollback.
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s));",
+                (source_file,),
+            )
+            existing = connection.execute(
+                "SELECT sha256 FROM processed_files WHERE source_file = %s;",
+                (source_file,),
+            ).fetchone()
+
+            if existing is not None:
+                if existing[0] != checksum:
+                    raise ValueError(
+                        "Previously processed source file changed: "
+                        f"{source_file}. Use a new immutable filename."
+                    )
+                log.info(
+                    "Incremental skip | source_file=%s | sha256=%s",
+                    source_file,
+                    checksum,
+                )
+                return None
+
+            # Keep failed-run audit durable even if the data transaction rolls back.
+            run_id = start_ingestion_run(source_file)
+            result = process_csv(csv_path)
+            if file_sha256(csv_path) != checksum:
+                raise ValueError(
+                    f"Source file changed during ingestion: {source_file}"
+                )
+
+            inserted_readings = insert_readings(
+                result["accepted"],
+                connection=connection,
+            )
+            inserted_quarantined = insert_quarantined_readings(
+                source_file,
+                result["quarantined"],
+                connection=connection,
+            )
+            finish_ingestion_run_success(
+                run_id,
+                result,
+                inserted_readings,
+                inserted_quarantined,
+                connection=connection,
+            )
+            connection.execute(
+                """
+                INSERT INTO processed_files
+                    (source_file, sha256, ingestion_run_id)
+                VALUES (%s, %s, %s);
+                """,
+                (source_file, checksum, run_id),
+            )
+            # The result, audit and checkpoint commit as one transaction.
+    except Exception as error:
+        if run_id is not None:
+            finish_ingestion_run_failed(run_id, str(error))
+        log.error(
+            "Incremental ingestion failed | source_file=%s | run_id=%s",
+            source_file,
+            run_id,
+        )
+        raise
+
+    log.info(
+        "Incremental ingestion succeeded | source_file=%s | run_id=%s | "
+        "sha256=%s | accepted=%s | inserted=%s | quarantined=%s | "
+        "quarantine_inserted=%s | duplicates=%s | duration_seconds=%.3f",
+        source_file,
+        run_id,
+        checksum,
+        len(result["accepted"]),
+        inserted_readings,
+        len(result["quarantined"]),
+        inserted_quarantined,
+        len(result["skipped_duplicate_rows"]),
+        time.perf_counter() - started_at,
+    )
+    return result, inserted_readings, inserted_quarantined
+
+
 DEFAULT_CSV_PATH = (
     Path(__file__).parents[1] / "data/raw/solar_readings.csv"
 )
@@ -438,17 +548,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_CSV_PATH,
         help="CSV source path (default: data/raw/solar_readings.csv).",
     )
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Skip files already successfully checkpointed by SHA-256.",
+    )
     return parser.parse_args(argv)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
-    csv_path = parse_args().csv_path
+    args = parse_args()
+    csv_path = args.csv_path
 
-    result, inserted_readings, inserted_quarantined = (
-        ingest_csv(csv_path)
-    )
+    if args.incremental:
+        outcome = ingest_csv_incremental(csv_path)
+        if outcome is None:
+            print(f"Already processed: {csv_path.name}")
+            return
+    else:
+        outcome = ingest_csv(csv_path)
+
+    result, inserted_readings, inserted_quarantined = outcome
 
     print(
         "Accepted readings:",
