@@ -40,3 +40,20 @@ def test_main_uses_explicit_csv_path(monkeypatch, tmp_path):
     database.main()
 
     assert observed == [source]
+
+
+def test_parse_args_incremental_is_opt_in():
+    assert database.parse_args([]).incremental is False
+    args = database.parse_args(["--incremental", "--csv-path", "batch.csv"])
+    assert args.incremental is True
+    assert args.csv_path == Path("batch.csv")
+
+
+def test_main_skips_without_unpacking_when_checkpoint_exists(monkeypatch, tmp_path, capsys):
+    source = tmp_path / "already_processed.csv"
+    monkeypatch.setattr(
+        "sys.argv", ["database", "--incremental", "--csv-path", str(source)]
+    )
+    monkeypatch.setattr(database, "ingest_csv_incremental", lambda path: None)
+    database.main()
+    assert "Already processed: already_processed.csv" in capsys.readouterr().out
