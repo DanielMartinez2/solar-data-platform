@@ -99,7 +99,7 @@ def log_dag_failure(context: dict) -> None:
     tags=["solar-data-platform", "ingestion"],
 )
 def solar_ingestion_pipeline():
-    """Run migrations, ingest the raw CSV, then build and test dbt models."""
+    """Run migrations, ingest available CSV batches, then build dbt models."""
 
     @task(
         retries=2,
@@ -123,16 +123,9 @@ def solar_ingestion_pipeline():
         execution_timeout=timedelta(minutes=5),
     )
     def ingest_raw_csv() -> None:
-        raw_csv = PROJECT_ROOT / "data" / "raw" / "solar_readings.csv"
-
-        if not raw_csv.is_file():
-            raise FileNotFoundError(
-                f"Raw solar CSV not found: {raw_csv}"
-            )
-
         run_checked(
-            [sys.executable, "-m", "src.database"],
-            "Ingesting the raw solar CSV.",
+            [sys.executable, "-m", "scripts.ingest_raw_batches"],
+            "Discovering and incrementally ingesting raw CSV batches.",
         )
 
     @task(
