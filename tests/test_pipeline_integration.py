@@ -640,3 +640,89 @@ def test_incremental_failure_does_not_create_checkpoint_and_can_retry(
     outcome = ingest_csv_incremental(end_to_end_csv)
     assert outcome is not None
     assert outcome[1:] == (2, 3)
+
+
+def test_batch_quality_view_reports_rates_for_successful_ingestion(
+    end_to_end_csv: Path,
+):
+    ingest_csv(end_to_end_csv)
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT total_source_rows, accepted_count, quarantined_count,
+                   duplicate_count, quarantine_rate_pct,
+                   duplicate_rate_pct, insertion_rate_pct
+            FROM vw_ingestion_batch_quality
+            WHERE source_file = %s AND status = 'success';
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert row is not None
+    assert tuple(row[:4]) == (7, 2, 3, 2)
+    assert tuple(map(float, row[4:])) == (60.0, 28.57, 100.0)
+
+
+def test_batch_quality_view_reports_zero_insertion_on_reingestion(
+    end_to_end_csv: Path,
+):
+    ingest_csv(end_to_end_csv)
+    ingest_csv(end_to_end_csv)
+
+    with get_connection() as connection:
+        rates = connection.execute(
+            """
+            SELECT insertion_rate_pct
+            FROM vw_ingestion_batch_quality
+            WHERE source_file = %s
+            ORDER BY ingestion_run_id;
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchall()
+
+    assert [float(item[0]) for item in rates] == [100.0, 0.0]
+
+
+def test_batch_quality_view_keeps_failed_run_metrics_null(tmp_path: Path):
+    missing_csv = tmp_path / TEST_SOURCE_FILE
+    with pytest.raises(FileNotFoundError):
+        ingest_csv(missing_csv)
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT status, total_source_rows, quarantine_rate_pct,
+                   duplicate_rate_pct, insertion_rate_pct
+            FROM vw_ingestion_batch_quality
+            WHERE source_file = %s;
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert row == ("failed", None, None, None, None)
+
+
+def test_batch_quality_view_handles_empty_csv_without_division_by_zero(
+    tmp_path: Path,
+):
+    path = tmp_path / TEST_SOURCE_FILE
+    path.write_text(
+        "timestamp,site_id,panel_id,irradiance_wm2,"
+        "temperature_c,voltage_v,current_a\n",
+        encoding="utf-8",
+    )
+    ingest_csv(path)
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT total_source_rows, quarantine_rate_pct,
+                   duplicate_rate_pct, insertion_rate_pct
+            FROM vw_ingestion_batch_quality
+            WHERE source_file = %s;
+            """,
+            (TEST_SOURCE_FILE,),
+        ).fetchone()
+
+    assert row == (0, None, None, None)
