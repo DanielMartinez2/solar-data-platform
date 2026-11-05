@@ -27,6 +27,8 @@ x-airflow-common: &airflow-common
     DBT_ENV_SECRET_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     DBT_TARGET_PATH: /tmp/dbt-target
     DBT_LOG_PATH: /tmp/dbt-logs
+    SOLAR_MAX_QUARANTINE_PCT: ${SOLAR_MAX_QUARANTINE_PCT:-20}
+    SOLAR_MAX_DUPLICATE_PCT: ${SOLAR_MAX_DUPLICATE_PCT:-10}
 
   volumes:
     - ./airflow/dags:/opt/airflow/dags

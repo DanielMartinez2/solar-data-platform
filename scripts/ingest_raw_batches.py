@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from src.database import ingest_csv_incremental
+from src.batch_quality_rules import check_batch_quality, load_thresholds
 
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,11 @@ def ingest_batches(data_dir: Path) -> tuple[int, int]:
     """Process available batches; return (processed, skipped) counts."""
     processed = 0
     skipped = 0
+    try:
+        thresholds = load_thresholds()
+    except ValueError:
+        log.exception("Invalid quality thresholds; quality checks disabled for this run")
+        thresholds = None
 
     for batch in discover_csv_batches(data_dir):
         log.info("Checking CSV batch | source_file=%s", batch.name)
@@ -54,6 +60,14 @@ def ingest_batches(data_dir: Path) -> tuple[int, int]:
                 len(result["quarantined"]),
                 inserted_quarantined,
             )
+            if thresholds is not None:
+                try:
+                    check_batch_quality(batch.name, thresholds)
+                except Exception:
+                    # Quality monitoring must never mask a successful ingestion.
+                    log.exception(
+                        "Quality check unavailable | source_file=%s", batch.name
+                    )
 
     log.info(
         "CSV batch discovery completed | processed=%s | skipped=%s | total=%s",
