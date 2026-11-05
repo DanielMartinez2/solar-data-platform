@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import sys
-import time
 from datetime import timedelta
 from pathlib import Path
 
 import pendulum
 
 from airflow.sdk import dag, task
+from subprocess_logging import run_checked as stream_run_checked
 
 
 log = logging.getLogger(__name__)
@@ -22,31 +21,8 @@ DBT_PROJECT_DIR = PROJECT_ROOT / "warehouse"
 
 
 def run_checked(command: list[str], description: str) -> None:
-    """Run a project command and fail the task if the command fails."""
-    log.info("%s", description)
-    log.info("Command: %s", " ".join(command))
-
-    started_at = time.perf_counter()
-    try:
-        subprocess.run(
-            command,
-            cwd=PROJECT_ROOT,
-            check=True,
-        )
-    except subprocess.CalledProcessError as error:
-        log.error(
-            "Step failed: %s | exit_code=%s | duration_seconds=%.3f",
-            description,
-            error.returncode,
-            time.perf_counter() - started_at,
-        )
-        raise
-    else:
-        log.info(
-            "Step succeeded: %s | duration_seconds=%.3f",
-            description,
-            time.perf_counter() - started_at,
-        )
+    """Run a child process with severity-preserving Airflow logs."""
+    stream_run_checked(command, description, PROJECT_ROOT)
 
 
 def log_task_retry(context: dict) -> None:
