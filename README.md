@@ -124,6 +124,17 @@ O `.env.example` contém valores **somente para estudo local**. Não use essas s
 
 Para copiar dados gerados para `data/raw`, gerenciar checkpoints, verificar migrações, conectar o Power BI e diagnosticar falhas, siga o [guia completo de desenvolvimento local](docs/local_development.md).
 
+## Demonstração para avaliação técnica
+
+Para acompanhar a jornada completa sem ler toda a documentação, veja o
+[roteiro de demonstração](docs/portfolio_demo.md): geração de um lote sintético
+novo, ingestão com checkpoint, reexecução idempotente, dbt e inspeção da DAG.
+
+O projeto inclui um [guia de evidências visuais](docs/portfolio_evidence.md)
+para adicionar **capturas reais** do Power BI e do Airflow. As imagens ainda
+precisam ser coletadas no ambiente local; não são apresentadas capturas
+fictícias ou links para arquivos inexistentes.
+
 ## Estrutura do repositório
 
 ```text
@@ -158,6 +169,8 @@ Os exercícios documentam comportamentos no ambiente local, não substituem aval
 
 ## Documentação
 
+- [Demonstração guiada para avaliadores](docs/portfolio_demo.md)
+- [Evidências visuais e orientações para capturas reais](docs/portfolio_evidence.md)
 - [Arquitetura, fluxos e contratos técnicos](docs/architecture.md)
 - [Instalação, execução, testes e diagnóstico](docs/local_development.md)
 - [Indicadores operacionais por lote e consulta SQL](docs/batch_quality_metrics.md)
