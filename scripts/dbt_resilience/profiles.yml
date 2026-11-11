@@ -1,0 +1,12 @@
+solar_resilience:
+  target: test
+  outputs:
+    test:
+      type: postgres
+      host: postgres_test
+      port: 5432
+      user: "{{ env_var('POSTGRES_TEST_USER') }}"
+      password: "{{ env_var('DBT_ENV_SECRET_TEST_POSTGRES_PASSWORD') }}"
+      dbname: "{{ env_var('POSTGRES_TEST_DB') }}"
+      schema: resilience_drill
+      threads: 1
