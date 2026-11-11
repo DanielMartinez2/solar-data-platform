@@ -1,0 +1,7 @@
+name: solar_resilience
+version: "1.0.0"
+config-version: 2
+profile: solar_resilience
+test-paths: ["tests"]
+target-path: /tmp/dbt-resilience-target
+clean-targets: []
