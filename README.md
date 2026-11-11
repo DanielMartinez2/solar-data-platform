@@ -2,1485 +2,173 @@
 
 [![CI](https://github.com/DanielMartinez2/solar-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielMartinez2/solar-data-platform/actions/workflows/ci.yml)
 
-Plataforma de dados para ingestão, validação, armazenamento, transformação e análise de medições de geração solar.
+**Pipeline de Engenharia de Dados de ponta a ponta para medições fotovoltaicas sintéticas**, construído com Python, PostgreSQL, dbt, Apache Airflow, Docker e Power BI.
 
-O projeto foi desenvolvido com Python, PostgreSQL, dbt e Power BI e implementa um pipeline de dados de ponta a ponta: desde a leitura de arquivos CSV até a construção de indicadores analíticos e dashboards.
+O projeto demonstra ingestão incremental, validação, quarentena, cargas idempotentes, controle de alterações de arquivos, modelagem analítica, observabilidade, testes e recuperação de falhas. Os dados utilizados são **sintéticos**; este é um ambiente de aprendizagem/portfólio e não um sistema de monitoramento solar em produção.
 
-A plataforma valida medições fotovoltaicas, identifica duplicatas, conflitos e registros inválidos, mantém registros problemáticos em quarentena, audita as execuções de ingestão e transforma os dados válidos em modelos analíticos para consumo no Power BI.
+## Arquitetura
 
-> Os dados utilizados atualmente para demonstração são sintéticos e foram gerados exclusivamente para desenvolvimento, testes e portfólio.
-
----
-
-## Visão geral da arquitetura
-
-```text
-CSV bruto / dados sintéticos
-          │
-          ▼
-Python
-├── inspeção
-├── validação
-├── normalização
-├── deduplicação
-└── detecção de conflitos
-          │
-          ├──────────────► Quarentena
-          │                PostgreSQL / JSONB
-          │
-          ▼
-Medições válidas
-PostgreSQL
-          │
-          ▼
-dbt
-├── staging
-├── dimensão
-├── fatos
-├── marts
-├── cobertura
-└── qualidade dos dados
-          │
-          ▼
-Power BI
-├── análise individual
-├── comparação entre instalações
-├── qualidade dos dados
-└── detalhamento da quarentena
+```mermaid
+flowchart LR
+    A["CSV / data/raw"] --> B["Airflow / Python"]
+    B --> C{"Validação + deduplicação"}
+    C -->|Aceitos| D[("PostgreSQL / solar_readings")]
+    C -->|Inválidos ou conflitos| E[("Quarentena / JSONB")]
+    B --> F[("Auditoria + checkpoints SHA-256")]
+    F --> G["Métricas + WARNING"]
+    D --> H["dbt / staging, fatos e marts"]
+    E --> H
+    H --> I["Power BI"]
 ```
 
----
-
-## Principais funcionalidades
-
-### Ingestão e validação
-
-- Leitura de arquivos CSV.
-- Validação do cabeçalho obrigatório.
-- Validação de timestamps com fuso horário.
-- Conversão e validação de campos numéricos.
-- Aplicação de regras de domínio.
-- Normalização das medições.
-- Agrupamento pela chave natural:
+A DAG **`solar_ingestion_pipeline`** executa diariamente às **09:00 (America/Sao_Paulo)**, com a seguinte ordem:
 
 ```text
-(timestamp, site_id, panel_id)
+run_migrations  ->  ingest_raw_csv  ->  dbt_build
 ```
 
-- Identificação de duplicatas exatas.
-- Identificação de versões diferentes da mesma chave natural.
-- Quarentena simétrica dos registros envolvidos em conflitos.
-- Preservação do registro bruto e dos erros em `JSONB`.
-- Classificação da ingestão em:
-  - `accepted`;
-  - `quarantined`;
-  - `skipped_duplicate_rows`.
+O Airflow orquestra o processo, enquanto regras de validação, persistência, controles de arquivo e transformações permanecem em módulos independentes. Veja a [arquitetura técnica detalhada](docs/architecture.md).
 
-### Persistência e auditoria
+## Principais decisões de engenharia
 
-- Persistência idempotente com `ON CONFLICT DO NOTHING`.
-- Carga em massa das medições válidas com PostgreSQL `COPY` em tabela temporária de staging, seguida de merge idempotente na tabela final.
-- Armazenamento das medições válidas em `solar_readings`.
-- Armazenamento dos registros problemáticos em `quarantined_readings`.
-- Auditoria das execuções em `ingestion_runs`.
-- Registro de:
-  - registros aceitos;
-  - registros efetivamente inseridos;
-  - registros em quarentena;
-  - registros efetivamente inseridos na quarentena;
-  - duplicatas detectadas;
-  - status da execução;
-  - mensagens de erro.
-- Transação atômica para:
-  - medições aceitas;
-  - quarentena;
-  - finalização da execução.
-- Registro separado da falha caso a transação principal seja revertida.
+| Recurso | Como funciona |
+|---|---|
+| Validação de medições | Cabeçalhos, timestamps, tipos, domínios, duplicatas exatas e conflitos de chave natural |
+| Chave de negócio | `(timestamp, site_id, panel_id)` |
+| Quarentena | Registros problemáticos com origem e erros em PostgreSQL JSONB |
+| Persistência | PostgreSQL **COPY** + staging temporária + `ON CONFLICT DO NOTHING` |
+| Ingestão incremental | Descoberta ordenada de `data/raw/*.csv`; checkpoint por **nome + SHA-256** |
+| Arquivos alterados | Mesmo nome com conteúdo diferente provoca falha; fontes devem ser imutáveis |
+| Auditoria | `ingestion_runs` e `processed_files` ligados a cada execução |
+| Qualidade operacional | View `vw_ingestion_batch_quality` e warnings de quarentena, duplicação ou lote vazio |
+| Transformação | dbt Core: staging, dimensão, fatos, marts e testes automatizados |
+| Resiliência | Retries, limites de execução, `max_active_runs=1`, logs estruturados e exercícios isolados |
+| CI | GitHub Actions executa testes Python e validação dbt |
 
-### Gerador de dados sintéticos
+**Qualidade não bloqueante:** por padrão, quarentena acima de **20%**, duplicatas acima de **10%** e lote vazio geram `WARNING`, não interrompem a pipeline. Erros técnicos e testes dbt que falham continuam encerrando a task com erro.
 
-- Gerador parametrizável em Python.
-- Configuração por linha de comando de:
-  - data inicial;
-  - duração;
-  - frequência das medições;
-  - quantidade de instalações;
-  - quantidade de painéis;
-  - percentual de lacunas;
-  - percentual de duplicatas;
-  - percentual de registros inválidos;
-  - percentual de conflitos;
-  - semente aleatória.
-- Geração reprodutível.
-- Criação automática de manifesto JSON.
-- Cálculo de checksum SHA-256.
-- Simulação simplificada de irradiância e potência ao longo do dia.
-- Introdução controlada de:
-  - lacunas;
-  - duplicatas exatas;
-  - valores inválidos;
-  - conflitos de chave natural.
+## Resultado analítico
 
-### Data Warehouse
+A plataforma transforma medições válidas em indicadores por painel, instalação e período:
 
-- Transformações com dbt.
-- Camada de staging.
-- Dimensão de painéis.
-- Tabela de fatos de medições solares.
-- Agregações por instalação e por período.
-- Indicadores horários e diários.
-- Indicador de cobertura diária das medições.
-- Configuração de cobertura por instalação utilizando dbt seed.
-- Indicadores de qualidade dos dados.
-- Separação entre:
-  - lacunas;
-  - medições inválidas;
-  - conflitos.
-- Detalhamento dos erros armazenados em quarentena por:
-  - tipo de erro;
-  - campo afetado;
-  - instalação;
-  - dia.
-- Testes de reconciliação entre staging, fatos e marts.
-- Testes de integridade, unicidade, consistência e limites dos indicadores.
+- Potência instantânea calculada como `power_w = voltage_v × current_a`.
+- Séries de potência horária e diária.
+- Cobertura diária de medições válidas em relação às medições esperadas.
+- Decomposição de perdas por lacunas, valores inválidos e conflitos.
+- Classificação de erros presentes na quarentena.
 
-### Dashboard Power BI
+O dashboard **Power BI** é organizado em quatro visões: **Individual**, **Comparação entre instalações**, **Qualidade** e **Quarentena**.
 
-O projeto inclui um dashboard desenvolvido em Power BI para consumo dos modelos analíticos armazenados no PostgreSQL.
+**Limite de interpretação:** cobertura mede completude de registros, não disponibilidade física de equipamentos. Potência medida não equivale a energia produzida em kWh e a simulação não representa previsão fotovoltaica real.
 
-O relatório possui quatro páginas:
+## Dados de demonstração e desempenho
 
-1. **Visão individual**
-   - potência média diária;
-   - pico de potência observado;
-   - cobertura diária;
-   - curva horária de potência;
-   - evolução da cobertura diária;
-   - evolução da potência média diária.
+O cenário sintético principal documentado no projeto usa 30 dias, 10 instalações, 10 painéis por instalação e intervalos de 15 minutos, com **288.000 medições esperadas**.
 
-2. **Comparação**
-   - quantidade de instalações analisadas;
-   - cobertura geral;
-   - medições válidas;
-   - medições esperadas;
-   - potência média por instalação;
-   - cobertura acumulada por instalação.
+| Indicador do cenário sintético | Valor |
+|---|---:|
+| Medições aceitas | 283.392 |
+| Medições esperadas | 288.000 |
+| Cobertura geral | 98,40% |
+| Registros colocados em quarentena | 2.016 |
+| Duplicatas exatas descartadas | 1.440 |
 
-3. **Qualidade**
-   - medições ausentes ou rejeitadas;
-   - lacunas;
-   - medições inválidas;
-   - conflitos;
-   - perdas por instalação;
-   - composição das perdas por causa;
-   - evolução diária das perdas de qualidade.
+Em benchmark local documentado, a mediana da **persistência** de leituras válidas caiu de **33,529 s** (`executemany`) para **7,335 s** (PostgreSQL `COPY` + staging temporária): aproximadamente **4,57×** de aceleração nessa etapa. Considerando o fluxo completo medido naquele benchmark, as medianas foram 38,380 s e 11,766 s, respectivamente. Esses tempos são observações do ambiente de desenvolvimento, **não garantias de desempenho em produção**.
 
-4. **Quarentena**
-   - erros de validação por tipo;
-   - erros por campo afetado;
-   - evolução diária dos erros;
-   - distribuição dos erros por instalação.
+O gerador aceita parâmetros para lacunas, duplicatas, valores inválidos, conflitos e semente aleatória. Consulte [geração dos dados](docs/README_GENERATOR.md) e [modelagem do warehouse](docs/data_warehouse.md).
 
-A navegação entre as páginas é realizada por um navegador de páginas integrado ao relatório.
+## Quick start — Windows / PowerShell
 
----
-
-## Tecnologias
-
-- Python 3.12+
-- PostgreSQL 18
-- Docker Compose
-- Apache Airflow 3.3.2
-- Psycopg 3
-- python-dotenv
-- pytest
-- dbt Core
-- dbt-postgres
-- Power BI Desktop
-- DAX
-
----
-
-## Estrutura do projeto
-
-```text
-solar-data-platform/
-├── compose.yaml
-├── .env.example
-├── requirements.txt
-├── README.md
-├── solar_data.pdf
-│
-├── airflow/
-│   ├── dags/
-│   └── plugins/
-│
-├── data/
-│   ├── raw/
-│   │   └── solar_readings.csv
-│   └── generated/
-│
-├── database/
-│   ├── schema.sql
-│   └── migrations/
-│       ├── 001_create_solar_readings.sql
-│       ├── 002_create_quarantined_readings.sql
-│       └── 003_create_ingestion_runs.sql
-│
-├── docs/
-│   ├── data_warehouse.md
-│   └── README_GENERATOR.md
-│
-├── scripts/
-│   ├── benchmark_ingestion.py
-│   ├── generate_solar_data.py
-│   ├── run_dbt.py
-│   └── run_migrations.py
-│
-├── src/
-│   ├── database.py
-│   ├── inspect_csv.py
-│   └── validate_readings.py
-│
-├── tests/
-│   ├── fixtures/
-│   ├── test_database.py
-│   ├── test_generate_solar_data.py
-│   ├── test_pipeline_integration.py
-│   ├── test_run_migrations.py
-│   └── test_validate_readings.py
-│
-└── warehouse/
-    ├── dbt_project.yml
-    ├── profiles.yml
-    ├── models/
-    │   ├── staging/
-    │   └── marts/
-    ├── seeds/
-    └── tests/
-```
-
-Os arquivos em `data/generated/` são reproduzíveis pelo gerador e não precisam ser versionados no Git.
-
----
-
-# Quick Start
-
-## 1. Criar o ambiente Python
-
-Execute os comandos a partir da raiz do projeto.
-
-### PowerShell
+Requisitos: **Python 3.12+**, **Docker Desktop com Compose** e, opcionalmente, **Power BI Desktop**.
 
 ```powershell
+git clone https://github.com/DanielMartinez2/solar-data-platform.git
+cd solar-data-platform
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
 
-## 2. Configurar variáveis de ambiente
-
-Copie `.env.example` para `.env` apenas se ainda não existir:
-
-```powershell
+# Execute a cópia apenas na primeira configuração:
 Copy-Item .env.example .env
-```
+# Ajuste as credenciais no .env sem versioná-lo.
 
-Configure as credenciais do PostgreSQL.
-
-O arquivo `.env` deve permanecer fora do Git.
-
-## 3. Iniciar os bancos PostgreSQL
-
-```powershell
-docker compose up -d
-docker compose ps
-```
-
-Por padrão:
-
-| Ambiente | Porta |
-|---|---:|
-| Desenvolvimento | `5433` |
-| Testes | `5434` |
-
-Isso evita conflito com instalações locais do PostgreSQL que utilizem a porta `5432`.
-
-Sem perfil adicional, o Docker Compose inicia os bancos PostgreSQL de desenvolvimento e testes. O schema não é criado automaticamente pelo diretório `/docker-entrypoint-initdb.d/`; a criação e a evolução das tabelas são responsabilidade explícita do migration runner.
-
-### Ambiente local do Airflow
-
-O Airflow é mantido em um perfil separado do Docker Compose para que a infraestrutura de orquestração não precise subir durante tarefas comuns de desenvolvimento.
-
-A configuração local utiliza:
-
-```text
-Airflow 3.3.2
-│
-├── api-server
-├── dag-processor
-├── scheduler
-│   └── LocalExecutor
-└── PostgreSQL 17
-    └── metadados do Airflow
-```
-
-O PostgreSQL do Airflow é separado do PostgreSQL que armazena os dados solares. O primeiro registra estados de DAGs e Tasks; o segundo continua responsável por `solar_readings`, quarentena, auditoria e modelos analíticos.
-
-Antes da primeira inicialização, confirme que as variáveis `AIRFLOW_FERNET_KEY`, `AIRFLOW_API_SECRET_KEY` e `AIRFLOW_JWT_SECRET` existem no arquivo local `.env`. O `AIRFLOW_JWT_SECRET` precisa ser idêntico entre Scheduler e API Server, pois o Scheduler assina os tokens de execução das Tasks e o API Server os valida. Os valores presentes em `.env.example` servem apenas para desenvolvimento local.
-
-Inicialize o banco de metadados:
-
-```powershell
-docker compose --profile airflow up airflow-init
-```
-
-Depois inicie os componentes do Airflow:
-
-```powershell
-docker compose --profile airflow up -d
-docker compose ps
-```
-
-A interface local fica disponível em:
-
-```text
-http://localhost:8080
-```
-
-Neste ambiente de estudo, o Simple Auth Manager está configurado com acesso administrativo automático. Essa opção é apropriada apenas para desenvolvimento local e não deve ser usada como configuração de produção.
-
-Os diretórios `airflow/dags/` e `airflow/plugins/` fazem parte do projeto.
-
-### Executar migrations pelo Airflow
-
-Depois de validar a DAG de aprendizado, o projeto inclui uma segunda DAG:
-
-```text
-solar_run_migrations
-└── run_migrations
-```
-
-Essa DAG não reimplementa a lógica de migrations. A Task executa o mesmo arquivo usado fora do Airflow:
-
-```text
-scripts/run_migrations.py
-```
-
-Para isso, a imagem oficial do Airflow é estendida por `airflow/Dockerfile` e recebe apenas as dependências Python necessárias ao migration runner. Os diretórios `scripts/` e `database/` são montados nos containers Airflow em modo somente leitura.
-
-A conexão também muda de perspectiva dentro do Docker:
-
-```text
-Host Windows:
-localhost:5433
-        ↓
-solar-postgres
-
-Container Airflow:
-postgres:5432
-        ↓
-solar-postgres
-```
-
-O Compose injeta uma `DATABASE_URL` específica para os containers Airflow usando o nome do serviço Docker `postgres`. Isso é necessário porque, de dentro de um container, `localhost` aponta para o próprio container, não para o PostgreSQL da aplicação.
-
-Como a imagem do Airflow agora é personalizada, depois de atualizar essa configuração construa e recrie os serviços:
-
-```powershell
-docker compose --profile airflow build
-docker compose --profile airflow up -d
-```
-
-Confirme que a nova DAG foi descoberta:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler airflow dags list
-```
-
-Depois dispare:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler airflow dags trigger solar_run_migrations
-```
-
-Como o migration runner é idempotente, se todas as migrations já estiverem aplicadas, o comportamento esperado é a Task terminar com sucesso e registrar:
-
-```text
-Database is up to date.
-```
-
-Esse é um exemplo importante de orquestração: o Airflow decide **quando** executar a etapa, mas a regra de negócio e a idempotência continuam pertencendo ao migration runner.
-
----
-
-### Pipeline Airflow: migrations + ingestão
-
-Depois da DAG isolada de migrations, o projeto passa a ter uma DAG de pipeline:
-
-```text
-solar_ingestion_pipeline
-
-run_migrations
-      ↓
-ingest_raw_csv
-```
-
-A primeira Task executa o migration runner existente:
-
-```text
-scripts/run_migrations.py
-```
-
-A segunda executa o módulo de ingestão existente:
-
-```text
-python -m src.database
-```
-
-Ela usa o arquivo pequeno e conhecido:
-
-```text
-data/raw/solar_readings.csv
-```
-
-Os diretórios `src/` e `data/raw/` são montados nos containers Airflow como somente leitura. O Airflow não duplica a lógica de validação, quarentena, deduplicação ou persistência; ele apenas orquestra o código já testado pelo projeto.
-
-Depois de atualizar a branch ou fazer merge, recrie os serviços Airflow para que os novos mounts sejam aplicados:
-
-```powershell
-docker compose --profile airflow up -d --force-recreate `
-  airflow-api-server `
-  airflow-dag-processor `
-  airflow-scheduler
-```
-
-Confirme a descoberta:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler airflow dags list
-```
-
-Dispare o pipeline:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler `
-  airflow dags trigger solar_ingestion_pipeline
-```
-
-Como a persistência usa chaves naturais, `ON CONFLICT DO NOTHING` e quarentena idempotente por arquivo/linha, uma nova execução do mesmo CSV não deve duplicar os registros já persistidos.
-
----
-
-### Pipeline analítico completo no Airflow
-
-A DAG `solar_ingestion_pipeline` agora possui três etapas:
-
-```text
-run_migrations
-      ↓
-ingest_raw_csv
-      ↓
-dbt_build
-```
-
-A Task `dbt_build` executa:
-
-```text
-dbt build --project-dir /opt/solar-data-platform/warehouse --profiles-dir /opt/solar-data-platform/warehouse
-```
-
-O comando `dbt build` executa os recursos selecionados do projeto e também os testes associados, portanto a Task falha se houver erro na construção dos modelos ou nos testes de qualidade.
-
-Para permitir a execução dentro do container:
-
-- `dbt-core` e `dbt-postgres` fazem parte da imagem Airflow customizada;
-- `warehouse/` é montado como somente leitura;
-- o profile aceita `DBT_POSTGRES_HOST` e `DBT_POSTGRES_PORT`;
-- dentro do Docker, o dbt usa `postgres:5432`;
-- `POSTGRES_USER` e `POSTGRES_DB` são repassados aos containers Airflow para o `profiles.yml`;
-- a senha é fornecida por `DBT_ENV_SECRET_POSTGRES_PASSWORD`;
-- artefatos temporários do dbt são gravados em `/tmp/dbt-target` e logs em `/tmp/dbt-logs`, preservando o mount somente leitura do projeto.
-
-Como a imagem ganhou novas dependências, depois do merge execute:
-
-```powershell
-docker compose --profile airflow build
-docker compose --profile airflow up -d --force-recreate
-```
-
-Depois confirme a DAG:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler airflow dags list
-```
-
-e dispare:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler `
-  airflow dags trigger solar_ingestion_pipeline
-```
-
-Na UI, o resultado esperado é:
-
-```text
-run_migrations   success
-      ↓
-ingest_raw_csv   success
-      ↓
-dbt_build        success
-```
-
----
-
-### Resiliência operacional da DAG
-
-A DAG `solar_ingestion_pipeline` também possui proteções para falhas transitórias e execuções longas.
-
-Configuração da DAG:
-
-```text
-max_active_runs = 1
-dagrun_timeout = 20 minutos
-```
-
-Isso impede duas execuções simultâneas do mesmo pipeline e encerra uma DAG Run que ultrapasse o tempo máximo global.
-
-Cada Task possui retries e timeout próprios:
-
-```text
-run_migrations
-  retries: 2
-  retry_delay: 30 s
-  execution_timeout: 2 min
-
-ingest_raw_csv
-  retries: 2
-  retry_delay: 30 s
-  execution_timeout: 5 min
-
-dbt_build
-  retries: 2
-  retry_delay: 30 s
-  execution_timeout: 10 min
-```
-
-Com `retries=2`, uma Task pode executar até três tentativas no total: a tentativa inicial e até duas novas tentativas.
-
-Os retries ajudam em falhas transitórias, como indisponibilidade momentânea do PostgreSQL. Eles não corrigem erros determinísticos, como um SQL inválido ou variável obrigatória ausente.
-
-Os timeouts evitam Tasks indefinidamente presas. O `dagrun_timeout` funciona como um limite adicional para a execução completa.
-
----
-
-### DAG de aprendizado: retry controlado
-
-A DAG `learning_retry_behavior` demonstra o ciclo de retry sem tocar no pipeline real.
-
-Ela possui uma única Task:
-
-```text
-fail_once_then_succeed
-```
-
-Com a configuração:
-
-```text
-retries = 2
-retry_delay = 30 segundos
-execution_timeout = 2 minutos
-```
-
-A Task consulta o `try_number` da Task Instance. Na primeira tentativa, ela gera intencionalmente uma exceção. Na tentativa seguinte, conclui com sucesso.
-
-O comportamento esperado é:
-
-```text
-try 1
-running
-  ↓
-failed internamente
-  ↓
-up_for_retry
-  ↓
-espera 30 s
-  ↓
-try 2
-running
-  ↓
-success
-```
-
-Dispare manualmente:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler `
-  airflow dags trigger learning_retry_behavior
-```
-
-Na UI, abra a Task `fail_once_then_succeed` e compare os logs das tentativas. A primeira deve conter:
-
-```text
-Intentional learning failure on the first attempt.
-```
-
-A segunda deve conter uma mensagem indicando que o retry foi bem-sucedido.
-
-Essa DAG é propositalmente separada de `solar_ingestion_pipeline`, para que o estudo de falhas não modifique nem interrompa o pipeline de dados.
-
----
-
-### Primeira DAG de aprendizado
-
-A primeira DAG foi criada em:
-
-```text
-airflow/dags/learning_hello_airflow.py
-```
-
-Ela é propositalmente independente do pipeline solar real. Seu objetivo é permitir observar o ciclo básico do Airflow antes de conectar migrations, ingestão e dbt.
-
-A estrutura é:
-
-```text
-start
-  ↓
-hello_airflow
-  ↓
-finish
-```
-
-Características principais:
-
-- `dag_id="learning_hello_airflow"`;
-- `schedule=None`, portanto a execução é manual;
-- `catchup=False`;
-- três Tasks Python criadas com `@task`;
-- dependências definidas com `>>`;
-- logs produzidos com o módulo padrão `logging`.
-
-Com os serviços do Airflow em execução, confirme que a DAG foi descoberta:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler airflow dags list
-```
-
-Na interface em `http://localhost:8080`, localize `learning_hello_airflow`, abra a DAG e acione uma execução manual.
-
-Também é possível dispará-la pela CLI:
-
-```powershell
-docker compose --profile airflow exec airflow-scheduler airflow dags trigger learning_hello_airflow
-```
-
-Depois acompanhe na UI os estados das Task Instances e abra os logs de `start`, `hello_airflow` e `finish`.
-
-
-Para acompanhar os componentes:
-
-```powershell
-docker compose --profile airflow ps
-docker compose --profile airflow logs -f airflow-scheduler
-```
-
-Para interromper os contêineres preservando os volumes:
-
-
-```powershell
-docker compose stop
-```
-
-Evite:
-
-```powershell
-docker compose down -v
-```
-
-caso queira preservar os dados.
-
----
-
-## Inicialização e migrations
-
-O histórico do schema é versionado em `database/migrations/`.
-
-Para um banco vazio, execute:
-
-```powershell
+docker compose up -d postgres postgres_test
 python scripts/run_migrations.py
-```
-
-O runner aplica os arquivos `NNN_descricao.sql` em ordem numérica e registra cada versão em `schema_migrations`, incluindo checksum SHA-256. Migrations já aplicadas não são executadas novamente e alterações em arquivos já registrados são rejeitadas.
-
-Histórico atual:
-
-```text
-001_create_solar_readings.sql
-002_create_quarantined_readings.sql
-003_create_ingestion_runs.sql
-```
-
-### Banco criado antes do migration runner
-
-Se o banco local já possui o schema atual porque foi inicializado anteriormente por `database/schema.sql`, faça o baseline uma única vez:
-
-```powershell
-python scripts/run_migrations.py --baseline-through 3
-```
-
-Esse comando registra as migrations 001–003 como já aplicadas sem executar novamente o SQL. Use-o somente quando o schema existente já corresponder a essas versões.
-
-Depois disso, novas migrations podem ser aplicadas normalmente com:
-
-```powershell
-python scripts/run_migrations.py
-```
-
-O arquivo `database/schema.sql` permanece como snapshot de referência do schema atual; a evolução do banco passa a ser controlada pelas migrations.
-
-### Banco de testes local
-
-Quando o volume de testes for novo, inicialize o schema usando a URL específica de testes:
-
-```powershell
 python scripts/run_migrations.py --database-url-env TEST_DATABASE_URL
+python -m pytest -q
 ```
 
-Se o banco de testes já existia antes do migration runner e já possui o schema atual, faça também um baseline único nele:
+**Ingestão local incremental:**
 
 ```powershell
-python scripts/run_migrations.py --database-url-env TEST_DATABASE_URL --baseline-through 3
+python -m scripts.ingest_raw_batches
 ```
 
-Assim, tanto o ambiente de desenvolvimento quanto o ambiente de testes seguem o mesmo histórico de migrations.
-
----
-
-# Executar o pipeline de ingestão
-
-O arquivo padrão pode ser processado com:
-
-```powershell
-python -m src.database
-```
-
-Fluxo da ingestão:
-
-1. leitura do CSV;
-2. validação;
-3. normalização;
-4. identificação de duplicatas e conflitos;
-5. classificação dos registros;
-6. início da auditoria;
-7. persistência das medições válidas;
-8. persistência dos registros em quarentena;
-9. conclusão da execução.
-
-Em caso de erro, a transação principal é revertida e a execução é posteriormente registrada como `failed`.
-
----
-
-# Tabelas operacionais
-
-## `solar_readings`
-
-Armazena as medições válidas.
-
-A chave primária é composta por:
-
-```text
-(timestamp, site_id, panel_id)
-```
-
-## `quarantined_readings`
-
-Armazena registros inválidos ou conflitantes, preservando:
-
-- arquivo de origem;
-- número da linha;
-- registro bruto em JSONB;
-- lista estruturada de erros em JSONB;
-- data da quarentena.
-
-## `ingestion_runs`
-
-Armazena o histórico das execuções do pipeline, incluindo:
-
-- arquivo de origem;
-- início;
-- término;
-- status;
-- registros classificados;
-- registros efetivamente inseridos;
-- registros em quarentena;
-- duplicatas;
-- mensagens de erro.
-
----
-
-# Dados sintéticos
-
-## Gerar um conjunto de dados
-
-Exemplo:
-
-```powershell
-python scripts/generate_solar_data.py `
-  --start-date 2026-08-01 `
-  --days 30 `
-  --interval-minutes 15 `
-  --sites 10 `
-  --panels-per-site 10 `
-  --gap-pct 1 `
-  --duplicate-pct 0.5 `
-  --invalid-pct 0.5 `
-  --conflict-pct 0.1
-```
-
-O gerador produz:
-
-- arquivo CSV;
-- manifesto JSON;
-- checksum SHA-256;
-- contagens das anomalias introduzidas.
-
----
-
-## Conjunto principal utilizado no dashboard
-
-O conjunto principal é inteiramente sintético e cobre o período:
-
-```text
-01/08/2026 a 30/08/2026
-```
-
-Configuração:
-
-- 30 dias;
-- medições a cada 15 minutos;
-- 10 instalações;
-- 10 painéis por instalação;
-- 100 painéis simulados;
-- 96 horários esperados por painel por dia;
-- 288.000 medições teóricas.
-
-### Anomalias configuradas
-
-| Tipo | Percentual |
-|---|---:|
-| Lacunas | 1% |
-| Duplicatas exatas | 0,5% |
-| Registros inválidos | 0,5% |
-| Conflitos | 0,1% |
-
-### Resultado do processamento
-
-```text
-Accepted: 283392
-Quarantined: 2016
-Duplicates: 1440
-```
-
-### Otimização da persistência
-
-A persistência das medições aceitas evoluiu de inserções linha a linha para `executemany()` e, posteriormente, para carga em massa com PostgreSQL `COPY` e tabela temporária de staging.
-
-A primeira implementação, baseada em `cursor.execute()` para cada registro, levou 170,677 s para persistir 283.392 leituras aceitas em uma execução histórica. Esse valor é mantido apenas como referência da implementação inicial, pois foi obtido antes da adoção do benchmark repetível.
-
-A comparação atual utiliza cinco execuções por estratégia no mesmo conjunto sintético e considera a mediana como principal métrica:
-
-| Estratégia | Mediana da persistência | Mediana total | Throughput aproximado |
-|---|---:|---:|---:|
-| `cursor.executemany()` | 33,529 s | 38,380 s | 8,5 mil leituras/s |
-| PostgreSQL `COPY` + staging temporária | 7,335 s | 11,766 s | 38,6 mil leituras/s |
-
-Para a persistência das leituras aceitas, `COPY + staging` foi aproximadamente **4,57× mais rápido** que `executemany()`, com redução de cerca de **78,1%** no tempo mediano dessa etapa. Considerando o pipeline completo medido pelo benchmark, a mediana caiu de 38,380 s para 11,766 s, uma redução de aproximadamente **69,3%**.
-
-A implementação padrão atual utiliza `COPY` para carregar os registros em uma tabela temporária e, em seguida, executa um `INSERT ... SELECT ... ON CONFLICT DO NOTHING` para a tabela `solar_readings`.
-
-Esse desenho mantém a idempotência e a atomicidade do pipeline, preserva a regra de primeira ocorrência para chaves naturais repetidas no mesmo lote e reduz o custo de envio de centenas de milhares de comandos individuais ao PostgreSQL.
-
-A estratégia anterior com `executemany()` permanece disponível apenas para comparação no benchmark:
-
-```powershell
-python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy executemany --runs 5
-```
-
-Para medir a implementação padrão com `COPY + staging`:
-
-```powershell
-python scripts/benchmark_ingestion.py data/generated/solar_2026-08-01_30d_15min_10sites_10panels.csv --strategy copy-staging --runs 5
-```
-
-Quando `--runs` é maior que 1, o script mostra o tempo de cada execução e calcula mínimo, máximo, média e mediana para cada fase. A mediana é a principal referência recomendada para comparar estratégias, pois é menos sensível a uma execução isoladamente lenta ou rápida.
-
-Cada repetição utiliza o mesmo mecanismo de rollback do benchmark, portanto os dados de medição não permanecem gravados no banco. As contagens de registros também são verificadas entre as repetições para evitar comparar execuções funcionalmente diferentes.
-
-Os tempos são referências do ambiente de desenvolvimento e não representam benchmark de produção.
-
----
-
-# Modelo fotovoltaico utilizado na simulação
-
-Todos os painéis sintéticos utilizam como referência o módulo:
-
-```text
-Canadian Solar HiKu6 CS6W-550MS
-```
-
-O gerador utiliza parâmetros elétricos do módulo para produzir valores coerentes de:
-
-- irradiância;
-- temperatura;
-- tensão;
-- corrente;
-- potência.
-
-A simulação é intencionalmente simplificada e não deve ser utilizada como ferramenta de previsão real de geração fotovoltaica ou avaliação de desempenho de sistemas reais.
-
----
-
-# Data Warehouse
-
-O projeto utiliza dbt para transformar as medições validadas em modelos analíticos.
-
-## Principais modelos
-
-```text
-stg_solar_readings
-dim_panels
-fct_solar_readings
-mart_site_performance
-mart_site_power_timeseries
-mart_site_hourly_power
-mart_site_daily_power
-mart_site_daily_coverage
-mart_site_daily_data_quality
-mart_quarantine_error_breakdown
-```
-
----
-
-## `stg_solar_readings`
-
-Padroniza as medições aceitas e calcula a potência instantânea:
-
-```text
-power_w = voltage_v × current_a
-```
-
----
-
-## `dim_panels`
-
-Representa os painéis observados nas medições válidas.
-
-A identificação de um painel utiliza a chave de negócio:
-
-```text
-(site_id, panel_id)
-```
-
-O modelo também registra:
-
-- primeiro instante observado;
-- último instante observado.
-
-Esses valores representam a presença do painel nos dados e não necessariamente seu ciclo de instalação física.
-
----
-
-## `fct_solar_readings`
-
-Tabela de fatos com uma linha por:
-
-```text
-(measured_at, site_id, panel_id)
-```
-
-Preserva as medições válidas utilizadas na camada analítica.
-
----
-
-## `mart_site_performance`
-
-Resume indicadores gerais por instalação.
-
-Inclui informações como:
-
-- quantidade de painéis observados;
-- quantidade de leituras;
-- primeiro e último instante;
-- potência média;
-- potência mínima;
-- potência máxima.
-
----
-
-## `mart_site_power_timeseries`
-
-Agrega a potência observada dos painéis válidos de uma instalação em cada instante.
-
-A potência observada representa apenas os painéis que possuem uma medição válida naquele momento.
-
----
-
-## `mart_site_hourly_power`
-
-Produz indicadores horários por instalação:
-
-- quantidade de instantes observados;
-- potência média;
-- potência máxima.
-
----
-
-## `mart_site_daily_power`
-
-Produz indicadores diários por instalação:
-
-- quantidade de instantes;
-- quantidade de contribuições dos painéis;
-- potência média;
-- potência máxima.
-
----
-
-## `mart_site_daily_coverage`
-
-Compara a quantidade de medições válidas com a quantidade esperada por instalação e dia.
-
----
-
-## `mart_site_daily_data_quality`
-
-Decompõe as perdas de cobertura em:
-
-- lacunas;
-- registros inválidos;
-- conflitos.
-
----
-
-## `mart_quarantine_error_breakdown`
-
-Detalha os erros de validação armazenados na quarentena por:
-
-- instalação;
-- data;
-- tipo de erro;
-- campo afetado.
-
-Conflitos são tratados separadamente da análise dos erros de campo.
-
----
-
-# Cobertura das medições
-
-A cobertura representa a completude dos registros válidos.
-
-Para cada instalação e dia:
-
-```text
-medicoes_esperadas =
-    quantidade_de_paineis
-    × horarios_esperados_por_dia
-```
-
-e:
-
-```text
-cobertura_pct =
-    100
-    × medicoes_validas
-    / medicoes_esperadas
-```
-
-A configuração utilizada para esse cálculo é mantida em:
-
-```text
-warehouse/seeds/solar_coverage_config.csv
-```
-
-Isso permite representar diferentes quantidades de painéis e frequências de medição ao longo do tempo.
-
-### Resultado do conjunto principal
-
-```text
-Medições esperadas: 288.000
-Medições válidas:   283.392
-Cobertura geral:     98,40%
-```
-
-A cobertura mede completude dos registros válidos e não disponibilidade física dos equipamentos.
-
----
-
-# Qualidade dos dados
-
-No conjunto sintético principal, as 4.608 medições esperadas que não resultaram em registros válidos foram decompostas em:
-
-```text
-Lacunas:     2.880
-Inválidas:   1.440
-Conflitos:     288
------------------
-Total:       4.608
-```
-
----
-
-## Lacunas
-
-Representam medições esperadas que não chegaram ao pipeline.
-
----
-
-## Registros inválidos
-
-Representam medições recebidas, mas rejeitadas pelas regras de validação.
-
-Distribuição no conjunto principal:
-
-```text
-Violação de domínio: 494
-Valor ausente:       476
-Erro de conversão:   470
-------------------------
-Total:             1.440
-```
-
-Campos afetados:
-
-```text
-Irradiância: 494
-Temperatura: 476
-Tensão:      470
-```
-
-No conjunto sintético atual, cada tipo de erro foi criado para afetar um campo específico.
-
-Em dados reais, essa relação não precisa ser 1:1 e um único registro pode apresentar mais de um erro de validação.
-
----
-
-## Conflitos
-
-Duas versões diferentes da mesma chave natural:
-
-```text
-(timestamp, site_id, panel_id)
-```
-
-são classificadas como conflitantes.
-
-Embora um conflito possa produzir duas linhas na quarentena, ele representa uma única medição esperada perdida quando analisado pela chave natural.
-
----
-
-## Duplicatas exatas
-
-Duplicatas exatas são descartadas durante a classificação.
-
-Elas não reduzem a cobertura quando a medição original permanece válida.
-
----
-
-# Potência e energia
-
-A plataforma trabalha atualmente com potência em watts:
-
-```text
-power_w = voltage_v × current_a
-```
-
-Os indicadores horários e diários utilizam médias aritméticas das observações disponíveis.
-
-A potência observada de uma instalação corresponde à soma das potências dos painéis que possuem uma medição válida naquele instante.
-
-Portanto, lacunas podem fazer a potência observada ficar abaixo da potência efetivamente produzida pela instalação.
-
-> O projeto ainda não calcula energia produzida em `kWh`.
-
-Potência e energia são grandezas diferentes e não devem ser tratadas como equivalentes.
-
----
-
-# Fuso horário
-
-Os timestamps são armazenados com informação de fuso horário.
-
-A simulação utiliza como referência local:
-
-```text
-UTC-03:00
-```
-
-Os modelos analíticos utilizam esse horário para determinar datas locais e agregações diárias.
-
----
-
-# Executar o Data Warehouse
-
-## Carregar seeds
-
-```powershell
-python scripts/run_dbt.py seed
-```
-
-## Executar modelos
-
-```powershell
-python scripts/run_dbt.py run
-```
-
-## Executar testes
-
-```powershell
-python scripts/run_dbt.py test
-```
-
-## Executar modelos e testes
+**Criar/validar o warehouse:**
 
 ```powershell
 python scripts/run_dbt.py build
 ```
 
----
-
-# Testes dbt
-
-Última execução confirmada:
-
-```text
-PASS=106
-WARN=0
-ERROR=0
-SKIP=0
-NO-OP=0
-TOTAL=106
-```
-
-A suíte inclui verificações de:
-
-- valores obrigatórios;
-- unicidade;
-- regras de domínio;
-- integridade entre fatos e dimensões;
-- consistência das agregações;
-- reconciliação entre staging e fatos;
-- reconciliação das agregações horárias;
-- reconciliação das agregações diárias;
-- configuração da cobertura;
-- períodos de configuração sobrepostos;
-- limites de cobertura;
-- reconciliação da cobertura com a tabela de fatos;
-- decomposição da qualidade dos dados;
-- reconciliação da quarentena;
-- validação do detalhamento dos erros;
-- reconciliação dos erros de validação.
-
----
-
-# Testes Python
-
-Com os bancos PostgreSQL iniciados:
+**Subir Airflow (opcional, perfil separado):**
 
 ```powershell
-python -m pytest -q
+docker compose --profile airflow build
+docker compose --profile airflow up airflow-init
+docker compose --profile airflow up -d
 ```
 
-Última execução confirmada:
+Acesse **<http://localhost:8080>**, habilite a DAG `solar_ingestion_pipeline` se estiver pausada e execute manualmente para conferir `run_migrations → ingest_raw_csv → dbt_build`.
+
+O `.env.example` contém valores **somente para estudo local**. Não use essas senhas e essa configuração de autenticação Airflow em ambiente público ou de produção.
+
+Para copiar dados gerados para `data/raw`, gerenciar checkpoints, verificar migrações, conectar o Power BI e diagnosticar falhas, siga o [guia completo de desenvolvimento local](docs/local_development.md).
+
+## Estrutura do repositório
 
 ```text
-93 passed
+solar-data-platform/
+├── .github/workflows/ci.yml        # Testes automatizados
+├── airflow/dags/                   # Pipeline e DAGs de exercícios isolados
+├── data/raw/                       # Entradas CSV imutáveis
+├── data/generated/                 # Dados sintéticos geráveis localmente
+├── database/migrations/            # Evolução versionada de schema
+├── docs/                           # Arquitetura, operação e experimentos
+├── scripts/                        # Migrations, ingestão em lotes e utilitários
+├── src/                            # Validação, persistência e alertas de qualidade
+├── tests/                          # Testes Python unitários/integrados
+├── warehouse/                      # dbt: staging, marts, seeds e testes
+├── compose.yaml
+├── pytest.ini
+└── requirements.txt
 ```
 
-Os testes incluem:
+## Testes de resiliência realizados
 
-- validação de registros;
-- duplicatas;
-- conflitos;
-- persistência;
-- idempotência;
-- transações;
-- auditoria;
-- rollback;
-- integração com PostgreSQL;
-- pipeline de ponta a ponta;
-- gerador de dados sintéticos.
+A infraestrutura foi exercitada com DAGs **manuais e isoladas** que não alteram o pipeline analítico principal:
 
-Os testes de banco utilizam um PostgreSQL separado do ambiente de desenvolvimento.
+| Experimento | Resultado observado |
+|---|---|
+| PostgreSQL de testes temporariamente indisponível | Falha, retry e sucesso após restauração |
+| dbt com teste singular propositalmente inválido | Erro propagado ao Airflow; nova execução passa com condição corrigida |
+| Timeout controlado | Task longa termina em erro; execução curta passa |
+| Concorrência | Duas execuções da mesma DAG não ficam ativas simultaneamente com `max_active_runs=1` |
 
-A suíte verifica a identidade da conexão antes de permitir a execução dos testes que alteram dados.
+Os exercícios documentam comportamentos no ambiente local, não substituem avaliações de disponibilidade, segurança ou escalabilidade em produção.
 
----
+## Documentação
 
-# Dashboard Power BI
-
-O dashboard utiliza os modelos analíticos do schema `analytics` do PostgreSQL.
-
-A conexão foi configurada utilizando o modo **Importar** do Power BI.
-
-O PostgreSQL precisa estar disponível durante:
-
-- importação inicial;
-- atualização dos dados;
-- inclusão de novas tabelas.
-
-Após a importação, o arquivo `.pbix` pode ser utilizado para edição e exploração sem que os contêineres permaneçam em execução.
-
----
-
-## Estrutura do dashboard
-
-### 1. Visão individual
-
-Permite selecionar:
-
-- instalação;
-- data.
-
-Apresenta:
-
-- potência média diária;
-- pico de potência observado;
-- cobertura diária;
-- curva horária de potência;
-- evolução da cobertura diária;
-- evolução da potência média diária.
-
----
-
-### 2. Comparação
-
-Apresenta:
-
-- instalações analisadas;
-- cobertura geral;
-- medições válidas;
-- medições esperadas;
-- potência média por instalação;
-- cobertura acumulada por instalação.
-
----
-
-### 3. Qualidade
-
-Apresenta:
-
-- medições ausentes ou rejeitadas;
-- lacunas;
-- medições inválidas;
-- conflitos;
-- perdas por instalação;
-- composição das perdas;
-- evolução diária das perdas de qualidade.
-
----
-
-### 4. Quarentena
-
-Apresenta:
-
-- erros de validação por tipo;
-- erros por campo afetado;
-- evolução diária dos erros de validação;
-- distribuição dos erros por instalação.
-
----
-
-## Modelo Power BI
-
-O modelo utiliza dimensões compartilhadas de:
-
-- calendário;
-- instalações.
-
-Principais dimensões:
-
-```text
-Dim_Calendario
-Dim_Instalacoes
-```
-
-As tabelas analíticas são relacionadas às dimensões utilizando relacionamentos:
-
-```text
-1:*
-```
-
-com direção de filtro única.
-
-Uma tabela desconectada:
-
-```text
-Medidas
-```
-
-é utilizada exclusivamente para organização das medidas DAX.
-
----
-
-# Exportação do dashboard
-
-Uma versão exportada do dashboard em PDF está disponível em:
-
-[Dashboard Solar Data Platform — PDF](solar_data.pdf)
-
-O PDF apresenta as quatro páginas utilizadas no relatório Power BI:
-
-1. Visão individual;
-2. Comparação;
-3. Qualidade;
-4. Quarentena.
-
----
-
-# Documentação adicional
-
-- [Data Warehouse](docs/data_warehouse.md)
+- [Arquitetura, fluxos e contratos técnicos](docs/architecture.md)
+- [Instalação, execução, testes e diagnóstico](docs/local_development.md)
+- [Indicadores operacionais por lote e consulta SQL](docs/batch_quality_metrics.md)
+- [Modelo analítico e interpretação das métricas](docs/data_warehouse.md)
 - [Gerador de dados sintéticos](docs/README_GENERATOR.md)
-- [Dashboard Power BI — PDF](solar_data.pdf)
+- [Drill: recuperação PostgreSQL de testes](docs/postgres_recovery_drill.md)
+- [Drill: falha de qualidade dbt](docs/dbt_quality_failure_drill.md)
+- [Drill: timeouts e concorrência](docs/airflow_timeout_concurrency_drill.md)
 
----
+## Limitações e próximos passos
 
-# Limitações atuais
+O projeto é local, baseado em arquivos CSV e dados sintéticos. Não inclui ingestão de dispositivos reais, implantação em nuvem, notificações externas ou previsão energética. Os marts já incluem **cobertura diária e lacunas**, mas alertas automáticos de atraso/ausência temporal de lotes ainda podem ser desenvolvidos como evolução futura.
 
-- Os dados apresentados atualmente no dashboard são sintéticos.
-- O simulador fotovoltaico é simplificado.
-- O modelo não representa todas as variáveis físicas de uma instalação fotovoltaica real.
-- O horário local utilizado atualmente é fixo em UTC-03:00.
-- Lacunas e registros rejeitados reduzem a cobertura.
-- A potência observada pode subestimar a potência total quando existem painéis sem medição válida.
-- As médias atuais são aritméticas e não ponderadas pelo intervalo de tempo.
-- O projeto ainda não calcula energia produzida em `kWh`.
-- O conjunto sintético atual associa cada tipo de erro de validação a um campo específico por construção.
-- Os indicadores de cobertura representam qualidade e completude dos dados, não disponibilidade física dos equipamentos.
-- O tempo de ingestão observado foi medido em ambiente local de desenvolvimento e não deve ser interpretado como benchmark de produção.
-
----
-
-# Roadmap
-
-- Calcular energia produzida em `kWh`.
-- Evoluir a modelagem temporal.
-- Avaliar inserções em lote para otimizar a ingestão.
-- Adicionar orquestração do pipeline.
-- Preparar publicação e documentação do dashboard para portfólio.
-- Avaliar futura camada de detecção de anomalias.
-
----
-
-# Segurança
-
-Nunca faça commit de:
-
-- `.env`;
-- senhas;
-- URLs contendo credenciais reais;
-- tokens;
-- outros segredos.
-
-Versione somente `.env.example` com valores fictícios.
+O foco desta versão é demonstrar **boas práticas de Engenharia de Dados reproduzíveis e verificáveis**, com separação de responsabilidades, qualidade, rastreabilidade e automação.
